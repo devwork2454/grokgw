@@ -1,0 +1,11 @@
+{
+  "sannysoft_alerts": 0,
+  "nowsecure_alerts": 2,
+  "http403_alerts": 0,
+  "http429_alerts": 0,
+  "summary": {
+    "total": 0,
+    "by_kind": {}
+  },
+  "all_alerts": []
+}

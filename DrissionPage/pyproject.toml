@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "DrissionPage"
+version = "5.0.0b0"
+description = "Python-based web automation tool with self-developed kernel"
+requires-python = ">=3.6"
+dependencies = [
+    "requests",
+    "lxml",
+    "cssselect",
+    "DrissionGet>=1.2.1",
+    "DrissionRecord",
+    "websocket-client",
+    "click",
+    "tldextract>=3.4.4",
+    "psutil",
+    "ftfy",
+]
+
+[tool.setuptools.packages.find]
+include = ["DrissionPage*"]
+
+[tool.setuptools.package-data]
+"DrissionPage" = ["*.pyi", "*/*.pyi", "_configs/configs.ini", "_functions/suffixes.dat"]

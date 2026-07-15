@@ -1,0 +1,183 @@
+[
+  {
+    "label": "baseline_hl",
+    "headless": true,
+    "hardened": false,
+    "sites": {
+      "sannysoft": {
+        "items": {
+          "user-agent": {
+            "passed": false,
+            "failed": true,
+            "cls": "failed result",
+            "txt": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, l"
+          },
+          "webdriver": {
+            "passed": true,
+            "failed": false,
+            "cls": "result passed",
+            "txt": "missing (passed)"
+          },
+          "advanced-webdriver": {
+            "passed": true,
+            "failed": false,
+            "cls": "result passed",
+            "txt": "passed"
+          },
+          "chrome": {
+            "passed": true,
+            "failed": false,
+            "cls": "result passed",
+            "txt": "present (passed)"
+          },
+          "permissions": {
+            "passed": true,
+            "failed": false,
+            "cls": "result passed",
+            "txt": "denied"
+          },
+          "plugins-length": {
+            "passed": true,
+            "failed": false,
+            "cls": "result passed",
+            "txt": "5"
+          },
+          "plugins-type": {
+            "passed": true,
+            "failed": false,
+            "cls": "result passed",
+            "txt": "passed"
+          },
+          "languages": {
+            "passed": true,
+            "failed": false,
+            "cls": "result passed",
+            "txt": "zh-CN,zh"
+          },
+          "webgl-vendor": {
+            "passed": false,
+            "failed": true,
+            "cls": "failed",
+            "txt": "Canvas has no webgl context"
+          },
+          "webgl-renderer": {
+            "passed": false,
+            "failed": true,
+            "cls": "failed",
+            "txt": "Canvas has no webgl context"
+          },
+          "broken-image-dimensions": {
+            "passed": true,
+            "failed": false,
+            "cls": "passed",
+            "txt": "16x16"
+          }
+        },
+        "list": [
+          {
+            "id": "user-agent-result",
+            "name": "user-agent",
+            "cls": "failed result",
+            "txt": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, l"
+          },
+          {
+            "id": "webdriver-result",
+            "name": "webdriver",
+            "cls": "result passed",
+            "txt": "missing (passed)"
+          },
+          {
+            "id": "advanced-webdriver-result",
+            "name": "advanced-webdriver",
+            "cls": "result passed",
+            "txt": "passed"
+          },
+          {
+            "id": "chrome-result",
+            "name": "chrome",
+            "cls": "result passed",
+            "txt": "present (passed)"
+          },
+          {
+            "id": "permissions-result",
+            "name": "permissions",
+            "cls": "result passed",
+            "txt": "denied"
+          },
+          {
+            "id": "plugins-length-result",
+            "name": "plugins-length",
+            "cls": "result passed",
+            "txt": "5"
+          },
+          {
+            "id": "plugins-type-result",
+            "name": "plugins-type",
+            "cls": "result passed",
+            "txt": "passed"
+          },
+          {
+            "id": "languages-result",
+            "name": "languages",
+            "cls": "result passed",
+            "txt": "zh-CN,zh"
+          },
+          {
+            "id": "webgl-vendor",
+            "name": "webgl-vendor",
+            "cls": "failed",
+            "txt": "Canvas has no webgl context"
+          },
+          {
+            "id": "webgl-renderer",
+            "name": "webgl-renderer",
+            "cls": "failed",
+            "txt": "Canvas has no webgl context"
+          },
+          {
+            "id": "broken-image-dimensions",
+            "name": "broken-image-dimensions",
+            "cls": "passed",
+            "txt": "16x16"
+          }
+        ]
+      },
+      "nowsecure": {
+        "title": "nowsecure.nl",
+        "text_head": "NOWSECURE\nBY NODRIVER\nNOWSECURE\nBY NODRIVER",
+        "has_challenge": false
+      },
+      "pixelscan": {
+        "title": "Pixelscan | Fast multi-check tool for detection analysis",
+        "text_head": "Products\nResources\nSpecial Offers\nCompany\nJoin Pixelscan Community\nBack\nFingerprint Check\n\nVerify your browser fingerprint\n\nCHECKERS\nIP Address Check\n\nSee your IP details\n\nIP Blacklist Check\n\nReviewing blacklist agent\n\nProxy Checker\n\nVerify proxy quality\n\nBot Verification\n\nVerify that a user is a human\n\nVPN Check\n\nTest and see the expected security\n\nTOOLS\nDNS Leak Test\n\nSecuring your DNS tunnel\n\nW"
+      }
+    },
+    "fingerprint": {
+      "webdriver": false,
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+      "platform": "Linux x86_64",
+      "languages": [
+        "zh-CN",
+        "zh"
+      ],
+      "plugins_length": 5,
+      "hardwareConcurrency": 12,
+      "deviceMemory": 32,
+      "has_window_chrome": true,
+      "chrome_runtime": false,
+      "permission_notification_state": "unknown",
+      "cdc_props": []
+    },
+    "error": null,
+    "sannysoft_summary": {
+      "passed": 8,
+      "failed": 3,
+      "total": 11,
+      "failed_items": [
+        "user-agent",
+        "webgl-vendor",
+        "webgl-renderer"
+      ]
+    }
+  }
+]
