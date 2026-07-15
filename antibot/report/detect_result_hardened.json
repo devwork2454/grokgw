@@ -5,14 +5,11 @@
     "fingerprint": {
       "webdriver": false,
       "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-      "platform": "Linux x86_64",
       "languages": [
         "zh-CN",
         "zh"
       ],
       "plugins_length": 5,
-      "hardwareConcurrency": 12,
-      "deviceMemory": 32,
       "has_window_chrome": true,
       "chrome_runtime": false,
       "cdc_props": [],
@@ -24,49 +21,41 @@
         "user-agent": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
           "txt": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
         },
         "webdriver": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
           "txt": "missing (passed)"
         },
         "advanced-webdriver": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
           "txt": "passed"
         },
         "chrome": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
           "txt": "present (passed)"
         },
         "permissions": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
-          "txt": "denied"
+          "txt": "prompt"
         },
         "plugins-length": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
           "txt": "5"
         },
         "plugins-type": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
           "txt": "passed"
         },
         "languages": {
           "passed": true,
           "failed": false,
-          "cls": "result passed",
           "txt": "zh-CN,zh"
         }
       },
