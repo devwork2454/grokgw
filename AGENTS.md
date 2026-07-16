@@ -78,7 +78,6 @@ Key elements:
 | httpbin | `https://httpbin.org/status/{403,429,503,451}` | Reliable block-status code triggers for monitor validation |
 | creepjs | `https://abrahamjuliot.github.io/creepjs/` | **Unreachable from this host** — skip |
 
-Do not point any of these scripts at production sites or use real accounts. The plan in `.claude/plans/antibot_test_plan.md` is explicit about that.
 
 ## Antibot scripts — what's what
 
@@ -128,6 +127,11 @@ When probing a site, the JS template in `run_takeover.py:collect_fingerprint()` 
   python -m runtime run --once <task>
   python -m runtime run --loop
   python -m runtime regress detect
+  python -m runtime register-apple --account <name> --profile-json data/secrets/apple_<name>.json
+  python -m runtime register-apple --account <name> --auto-identity --captcha-config data/secrets/captcha.json
+  python -m runtime probe-email --account <name> [--suffixes gmail.com,outlook.com]
+  python -m runtime identity-gen --account <name> [--count 3]
+  python -m runtime registrations list
   ```
 - Spec: `docs/superpowers/specs/2026-07-15-browser-ops-runtime-design.md`
 - Plan: `docs/superpowers/plans/2026-07-15-browser-ops-runtime-p0.md`
@@ -136,14 +140,16 @@ When probing a site, the JS template in `run_takeover.py:collect_fingerprint()` 
 
 ## Grok API Gateway (grokgw)
 
-- Package: `grokgw/` - OpenAI-compatible local API gateway wrapping Grok Build CLI.
-- Reuses SuperGrok subscription auth (`~/.grok/auth.json`), no API key needed.
+- Package: `grokgw/` — OpenAI 兼容本地 API 网关,双后端(proxy 默认 + cli fallback),复用 SuperGrok 订阅。
+- Repo: `https://github.com/devwork2454/grokgw`
 - Entry: from repo root with venv active:
   ```bash
   source antibot/.venv/bin/activate
-  python -m grokgw
+  python -m grokgw                               # proxy 后端 (~1.5s)
+  GROKGW_BACKEND=cli python -m grokgw             # CLI 后端 (~6s，隐私沙箱)
   ```
+- Deploy: `cd grokgw && ./install.sh` 或 `docker compose up -d`
 - Spec: `docs/superpowers/specs/2026-07-15-grok-api-gateway-design.md`
 - Plan: `docs/superpowers/plans/2026-07-15-grok-api-gateway.md`
-- Each request runs `grok -p` in an isolated empty `/tmp` dir (avoids repo-upload privacy risk).
+- 55 单测; CLI 后端沙箱隔离规避仓库上传风险; proxy 后端使用 curl 直连 api.x.ai
 - No function calling; no multi-account token pool (M3+ evolution).
