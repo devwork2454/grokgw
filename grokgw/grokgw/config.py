@@ -10,6 +10,16 @@ def _get_bool(key: str, default: bool) -> bool:
     return v.lower() in ("1", "true", "yes", "on")
 
 
+_DEFAULT_PROXY = "socks5h://127.0.0.1:2080"
+
+
+def _proxy_from_env() -> str | None:
+    if "GROKGW_PROXY_URL" not in os.environ:
+        return _DEFAULT_PROXY
+    raw = os.environ["GROKGW_PROXY_URL"].strip()
+    return raw or None
+
+
 @dataclass(frozen=True)
 class Settings:
     port: int = 8787
@@ -20,6 +30,7 @@ class Settings:
     grok_bin: str = "grok"
     timeout: int = 120
     expose_reasoning: bool = False
+    proxy_url: str | None = _DEFAULT_PROXY
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -32,4 +43,5 @@ class Settings:
             grok_bin=os.environ.get("GROKGW_GROK_BIN", "grok"),
             timeout=int(os.environ.get("GROKGW_TIMEOUT", "120")),
             expose_reasoning=_get_bool("GROKGW_EXPOSE_REASONING", False),
+            proxy_url=_proxy_from_env(),
         )

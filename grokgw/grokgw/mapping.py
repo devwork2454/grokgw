@@ -35,6 +35,21 @@ def to_cli_args(
     return args
 
 
+def _map_usage(raw: dict | None) -> dict | None:
+    if not raw or not isinstance(raw, dict):
+        return None
+    prompt = raw.get("input_tokens")
+    completion = raw.get("output_tokens")
+    total = raw.get("total_tokens")
+    if prompt is None and completion is None and total is None:
+        return None
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+    }
+
+
 def to_openai_response(data: dict, req: ChatCompletionRequest) -> dict:
     stop_raw = data.get("stopReason", "EndTurn")
     finish = _FINISH_MAP.get(stop_raw.lower(), "stop")
@@ -48,7 +63,7 @@ def to_openai_response(data: dict, req: ChatCompletionRequest) -> dict:
             "message": {"role": "assistant", "content": data.get("text", "")},
             "finish_reason": finish,
         }],
-        "usage": None,
+        "usage": _map_usage(data.get("usage")),
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import Protocol
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -15,7 +16,7 @@ _ALLOWED_MODELS = {"grok-4.5", "grok-build", "grok-latest"}
 
 class RunnerProtocol(Protocol):
     async def run(self, args: list[str]) -> dict: ...
-    async def run_stream(self, args: list[str]): ...
+    def run_stream(self, args: list[str]) -> AsyncIterator[dict]: ...
 
 
 def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: int) -> FastAPI:
@@ -100,6 +101,26 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
                 chunk = to_sse_chunk(event, req_id=req_id, model=model, settings=settings)
                 if chunk is not None:
                     yield chunk
+            yield "data: [DONE]\n\n"
+        except GrokRunError as e:
+            err_chunk = to_sse_chunk(
+                {"type": "error", "message": str(e)},
+                req_id=req_id,
+                model=model,
+                settings=settings,
+            )
+            if err_chunk is not None:
+                yield err_chunk
+            yield "data: [DONE]\n\n"
+        except TimeoutError as e:
+            err_chunk = to_sse_chunk(
+                {"type": "error", "message": str(e)},
+                req_id=req_id,
+                model=model,
+                settings=settings,
+            )
+            if err_chunk is not None:
+                yield err_chunk
             yield "data: [DONE]\n\n"
         finally:
             cleanup_sandbox(sandbox_dir)

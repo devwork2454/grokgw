@@ -94,11 +94,33 @@ def test_to_openai_response_length():
     assert resp["choices"][0]["finish_reason"] == "length"
 
 
-def test_to_openai_response_usage_none():
+def test_to_openai_response_usage_none_when_absent():
     data = {"text": "x", "stopReason": "EndTurn"}
     req = make_req()
     resp = to_openai_response(data, req)
     assert resp["usage"] is None
+
+
+def test_to_openai_response_usage_passthrough():
+    """Given grok json includes usage, When mapped, Then OpenAI usage fields are filled."""
+    data = {
+        "text": "PONG",
+        "stopReason": "EndTurn",
+        "usage": {
+            "input_tokens": 9972,
+            "cache_read_input_tokens": 6016,
+            "output_tokens": 36,
+            "reasoning_tokens": 30,
+            "total_tokens": 16024,
+        },
+    }
+    req = make_req()
+    resp = to_openai_response(data, req)
+    assert resp["usage"] == {
+        "prompt_tokens": 9972,
+        "completion_tokens": 36,
+        "total_tokens": 16024,
+    }
 
 
 # --- to_sse_chunk ---

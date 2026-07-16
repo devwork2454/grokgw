@@ -11,6 +11,7 @@ def test_defaults():
     assert s.grok_bin == "grok"
     assert s.timeout == 120
     assert s.expose_reasoning is False
+    assert s.proxy_url == "socks5h://127.0.0.1:2080"
 
 
 def test_env_override(monkeypatch):
@@ -20,6 +21,7 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("GROKGW_API_KEY", "secret")
     monkeypatch.setenv("GROKGW_TIMEOUT", "60")
     monkeypatch.setenv("GROKGW_EXPOSE_REASONING", "true")
+    monkeypatch.setenv("GROKGW_PROXY_URL", "socks5h://127.0.0.1:1080")
     s = Settings.from_env()
     assert s.port == 9999
     assert s.max_concurrent == 10
@@ -27,3 +29,10 @@ def test_env_override(monkeypatch):
     assert s.api_key == "secret"
     assert s.timeout == 60
     assert s.expose_reasoning is True
+    assert s.proxy_url == "socks5h://127.0.0.1:1080"
+
+
+def test_proxy_url_empty_disables(monkeypatch):
+    monkeypatch.setenv("GROKGW_PROXY_URL", "")
+    s = Settings.from_env()
+    assert s.proxy_url is None

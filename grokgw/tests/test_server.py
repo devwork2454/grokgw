@@ -180,8 +180,6 @@ async def test_generic_runner_error_returns_502():
 
 
 async def test_timeout_returns_504():
-    import asyncio as aio
-
     class TimeoutRunner:
         async def run(self, args):
             raise TimeoutError("grok timed out after 120s")
@@ -197,3 +195,29 @@ async def test_timeout_returns_504():
             "messages": [{"role": "user", "content": "x"}],
         })
         assert resp.status_code == 504
+
+
+async def test_stream_runner_error_emits_sse_error_frame():
+    """Given stream=True and runner raises GrokRunError, When client reads SSE, Then error frame + [DONE]."""
+    class StreamFailRunner:
+        async def run(self, args):
+            return {"text": "unused", "stopReason": "EndTurn"}
+
+        async def run_stream(self, args):
+            yield {"type": "text", "data": "partial"}
+            raise GrokRunError("upstream boom", 1, "upstream boom")
+            yield  # pragma: no cover
+
+    app = create_app(runner=StreamFailRunner(), api_key=None, max_concurrent=3)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.post("/v1/chat/completions", json={
+            "model": "grok-4.5",
+            "messages": [{"role": "user", "content": "x"}],
+            "stream": True,
+        })
+        assert resp.status_code == 200
+        body = resp.text
+        assert "partial" in body
+        assert "upstream boom" in body or "error" in body
+        assert "data: [DONE]" in body

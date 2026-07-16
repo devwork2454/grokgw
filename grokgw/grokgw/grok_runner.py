@@ -1,18 +1,14 @@
 from __future__ import annotations
 import asyncio
 import json
+import os
 from typing import AsyncIterator
 from grokgw.config import Settings
 
-
-# Grace period (seconds) to wait for a killed process to exit before giving up.
-# After SIGKILL a real process dies near-instantly; this guards against
-# transports/mocks that never observe the exit.
 _KILL_GRACE = 2
 
 
 class GrokRunError(Exception):
-    """Raised when grok CLI exits non-zero."""
     def __init__(self, message: str, returncode: int, stderr: str):
         super().__init__(message)
         self.returncode = returncode
@@ -23,12 +19,25 @@ class GrokRunner:
     def __init__(self, settings: Settings):
         self._settings = settings
 
+    def _subprocess_env(self) -> dict[str, str] | None:
+        proxy = self._settings.proxy_url
+        if not proxy:
+            return None
+        env = dict(os.environ)
+        env["ALL_PROXY"] = proxy
+        env["all_proxy"] = proxy
+        env["HTTPS_PROXY"] = proxy
+        env["https_proxy"] = proxy
+        env["HTTP_PROXY"] = proxy
+        env["http_proxy"] = proxy
+        return env
+
     async def run(self, args: list[str]) -> dict:
-        """Run grok, read all stdout, parse final JSON. Raises GrokRunError/TimeoutError."""
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=self._subprocess_env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -40,7 +49,7 @@ class GrokRunner:
             await self._reap(proc)
             raise TimeoutError(f"grok timed out after {self._settings.timeout}s") from None
 
-        assert proc.returncode is not None  # set after communicate() returns
+        assert proc.returncode is not None
         rc = proc.returncode
         if rc != 0:
             stderr_str = stderr.decode(errors="replace") if stderr else ""
@@ -56,14 +65,14 @@ class GrokRunner:
         return json.loads(stdout_str)
 
     async def run_stream(self, args: list[str]) -> AsyncIterator[dict]:
-        """Run grok streaming-json, yield events. Raises GrokRunError on non-zero exit."""
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=self._subprocess_env(),
         )
         try:
-            assert proc.stdout is not None  # set with stdout=PIPE
+            assert proc.stdout is not None
             async for line in proc.stdout:
                 line = line.strip()
                 if not line:
@@ -80,7 +89,7 @@ class GrokRunner:
                 await self._reap(proc)
                 raise TimeoutError(f"grok timed out after {self._settings.timeout}s") from None
 
-            assert proc.returncode is not None  # set after wait() returns
+            assert proc.returncode is not None
             rc = proc.returncode
             if rc != 0:
                 stderr_data = await proc.stderr.read() if proc.stderr else b""
@@ -93,7 +102,6 @@ class GrokRunner:
 
     @staticmethod
     async def _reap(proc: asyncio.subprocess.Process) -> None:
-        """Wait for a killed process to exit, with a short grace period."""
         try:
             await asyncio.wait_for(proc.wait(), timeout=_KILL_GRACE)
         except asyncio.TimeoutError:

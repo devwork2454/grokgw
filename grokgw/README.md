@@ -6,6 +6,7 @@ OpenAI 兼容本地 API 网关,封装 Grok Build CLI(`grok -p`),复用 SuperGrok
 
 - `grok` CLI 已安装(`~/.grok/bin/grok`)且已登录(`~/.grok/auth.json` 存在)
 - Python 3.12+
+- 本机 socks5 代理可用(默认 `127.0.0.1:2080`;IPv6 出口异常时必须)
 
 ## 安装
 
@@ -18,8 +19,12 @@ pip install pytest pytest-asyncio httpx   # dev
 ## 运行
 
 ```bash
+# 默认会把 socks5h://127.0.0.1:2080 注入 grok 子进程
 python -m grokgw
 # 默认监听 127.0.0.1:8787
+
+# 禁用代理(仅当本机直连可用时)
+GROKGW_PROXY_URL= python -m grokgw
 ```
 
 ## 使用
@@ -58,6 +63,7 @@ print(resp.choices[0].message.content)
 | `GROKGW_GROK_BIN` | grok | grok 二进制路径 |
 | `GROKGW_TIMEOUT` | 120 | 单请求超时(秒) |
 | `GROKGW_EXPOSE_REASONING` | false | 是否透传 thought 事件为 reasoning_content |
+| `GROKGW_PROXY_URL` | `socks5h://127.0.0.1:2080` | 注入 grok 子进程的代理;设为空字符串禁用 |
 
 ## 测试
 
@@ -70,7 +76,7 @@ python -m pytest grokgw/tests/ -v
 ## 局限
 
 - **不支持 function calling**(Grok Build headless 的 `--tools` 是内置工具,不接 OpenAI function schema)
-- 非流式响应 `usage` 为 null(grok json 输出不含 token 计数)
+- 非流式会透传 grok 的 `usage`(prompt/completion/total tokens);流式路径无 usage 帧
 - 每请求 spawn grok 进程,cold start ~2-5s,适合低并发自用
 - SuperGrok token 7 天过期需 `grok login` 刷新
 

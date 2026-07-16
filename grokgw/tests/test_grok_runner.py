@@ -77,3 +77,41 @@ async def test_run_timeout_kills_process(monkeypatch, runner):
     with pytest.raises(TimeoutError):
         await r.run(["grok", "-p", "Hi"])
     assert proc._killed is True
+
+
+async def test_run_injects_proxy_env(monkeypatch):
+    """Given proxy_url set, When run(), Then subprocess env has ALL_PROXY/https_proxy."""
+    captured: dict = {}
+    json_out = b'{"text":"ok","stopReason":"EndTurn"}\n'
+    proc = MockProc(stdout_lines=[json_out], returncode=0)
+
+    async def fake_create(*args, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return proc
+
+    monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
+    r = GrokRunner(Settings(proxy_url="socks5h://127.0.0.1:2080"))
+    await r.run(["grok", "-p", "Hi"])
+    env = captured["env"]
+    assert env is not None
+    assert env["ALL_PROXY"] == "socks5h://127.0.0.1:2080"
+    assert env["https_proxy"] == "socks5h://127.0.0.1:2080"
+    assert env["HTTPS_PROXY"] == "socks5h://127.0.0.1:2080"
+
+
+async def test_run_no_proxy_when_disabled(monkeypatch):
+    """Given proxy_url=None, When run(), Then env is not overridden for proxy."""
+    captured: dict = {}
+    json_out = b'{"text":"ok","stopReason":"EndTurn"}\n'
+    proc = MockProc(stdout_lines=[json_out], returncode=0)
+
+    async def fake_create(*args, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return proc
+
+    monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
+    r = GrokRunner(Settings(proxy_url=None))
+    await r.run(["grok", "-p", "Hi"])
+    env = captured["env"]
+    if env is not None:
+        assert "ALL_PROXY" not in env or env.get("ALL_PROXY") != "socks5h://127.0.0.1:2080"
