@@ -2,8 +2,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+
 from grokgw.config import Settings
+from grokgw.mapping import to_cli_args, to_openai_response, to_sse_chunk
+from grokgw.models import ChatCompletionRequest
+from grokgw.sandbox import cleanup as cleanup_sandbox
+from grokgw.sandbox import create as create_sandbox
 
 _KILL_GRACE = 2
 
@@ -18,6 +23,60 @@ class GrokRunError(Exception):
 class GrokRunner:
     def __init__(self, settings: Settings):
         self._settings = settings
+
+    async def complete(self, req: ChatCompletionRequest) -> dict:
+        sandbox_dir = create_sandbox(root=self._settings.sandbox_root)
+        try:
+            args = to_cli_args(
+                req.model_copy(update={"stream": False}),
+                sandbox_dir=sandbox_dir,
+                settings=self._settings,
+                req_id="cli",
+            )
+            data = await self.run(args)
+            return to_openai_response(data, req)
+        finally:
+            cleanup_sandbox(sandbox_dir)
+
+    async def stream(self, req: ChatCompletionRequest) -> AsyncIterator[str]:
+        sandbox_dir = create_sandbox(root=self._settings.sandbox_root)
+        req_id = f"chatcmpl-cli"
+        try:
+            args = to_cli_args(
+                req.model_copy(update={"stream": True}),
+                sandbox_dir=sandbox_dir,
+                settings=self._settings,
+                req_id=req_id,
+            )
+            async for event in self.run_stream(args):
+                chunk = to_sse_chunk(
+                    event, req_id=req_id, model=req.model, settings=self._settings
+                )
+                if chunk is not None:
+                    yield chunk
+            yield "data: [DONE]\n\n"
+        except GrokRunError as e:
+            err = to_sse_chunk(
+                {"type": "error", "message": str(e)},
+                req_id=req_id,
+                model=req.model,
+                settings=self._settings,
+            )
+            if err is not None:
+                yield err
+            yield "data: [DONE]\n\n"
+        except TimeoutError as e:
+            err = to_sse_chunk(
+                {"type": "error", "message": str(e)},
+                req_id=req_id,
+                model=req.model,
+                settings=self._settings,
+            )
+            if err is not None:
+                yield err
+            yield "data: [DONE]\n\n"
+        finally:
+            cleanup_sandbox(sandbox_dir)
 
     def _subprocess_env(self) -> dict[str, str] | None:
         proxy = self._settings.proxy_url

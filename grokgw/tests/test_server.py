@@ -1,19 +1,42 @@
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
+
+from grokgw.grok_runner import GrokRunError
 from grokgw.server import create_app
 
 
 class FakeRunner:
-    async def run(self, args):
-        return {"text": "PONG", "stopReason": "EndTurn", "sessionId": "s1", "requestId": "q1"}
+    async def complete(self, req):
+        return {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "created": 1,
+            "model": req.model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "PONG"},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
 
-    async def run_stream(self, args):
-        for ev in [
-            {"type": "text", "data": "Hello"},
-            {"type": "text", "data": " world"},
-            {"type": "end", "stopReason": "EndTurn"},
-        ]:
-            yield ev
+    async def stream(self, req):
+        yield (
+            'data: {"id":"c1","object":"chat.completion.chunk","created":1,'
+            '"model":"grok-4.5","choices":[{"index":0,"delta":{"content":"Hello"},'
+            '"finish_reason":null}]}\n\n'
+        )
+        yield (
+            'data: {"id":"c1","object":"chat.completion.chunk","created":1,'
+            '"model":"grok-4.5","choices":[{"index":0,"delta":{"content":" world"},'
+            '"finish_reason":null}]}\n\n'
+        )
+        yield (
+            'data: {"id":"c1","object":"chat.completion.chunk","created":1,'
+            '"model":"grok-4.5","choices":[{"index":0,"delta":{},'
+            '"finish_reason":"stop"}]}\n\n'
+        )
+        yield "data: [DONE]\n\n"
 
 
 @pytest.fixture
@@ -67,7 +90,6 @@ async def test_invalid_model(client):
 async def test_invalid_request_body(client):
     resp = await client.post("/v1/chat/completions", json={
         "model": "grok-4.5",
-        # missing messages
     })
     assert resp.status_code == 422
 
@@ -122,21 +144,17 @@ async def test_auth_correct_key(authed_client):
 
 
 async def test_healthz_no_auth_required(authed_client):
-    """healthz should work even when API key is set (liveness probe)."""
     resp = await authed_client.get("/healthz")
     assert resp.status_code == 200
 
 
-from grokgw.grok_runner import GrokRunError
-
-
 class AuthFailRunner:
-    """Runner that simulates grok auth failure."""
-    async def run(self, args):
-        raise GrokRunError("grok exited with code 1: auth error: please run grok login", 1, "auth error")
-    async def run_stream(self, args):
+    async def complete(self, req):
+        raise GrokRunError("auth error: please run grok login", 1, "auth error")
+
+    async def stream(self, req):
         raise GrokRunError("auth error", 1, "auth error")
-        yield  # make it a generator
+        yield
 
 
 @pytest.fixture
@@ -163,9 +181,10 @@ async def test_auth_expired_returns_401(authfail_client):
 
 async def test_generic_runner_error_returns_502():
     class FailRunner:
-        async def run(self, args):
-            raise GrokRunError("grok exited with code 1: some other error", 1, "error")
-        async def run_stream(self, args):
+        async def complete(self, req):
+            raise GrokRunError("some other error", 1, "error")
+
+        async def stream(self, req):
             raise GrokRunError("error", 1, "error")
             yield
 
@@ -181,9 +200,10 @@ async def test_generic_runner_error_returns_502():
 
 async def test_timeout_returns_504():
     class TimeoutRunner:
-        async def run(self, args):
+        async def complete(self, req):
             raise TimeoutError("grok timed out after 120s")
-        async def run_stream(self, args):
+
+        async def stream(self, req):
             raise TimeoutError("timed out")
             yield
 
@@ -198,15 +218,14 @@ async def test_timeout_returns_504():
 
 
 async def test_stream_runner_error_emits_sse_error_frame():
-    """Given stream=True and runner raises GrokRunError, When client reads SSE, Then error frame + [DONE]."""
     class StreamFailRunner:
-        async def run(self, args):
-            return {"text": "unused", "stopReason": "EndTurn"}
+        async def complete(self, req):
+            return {"choices": [{"message": {"content": "unused"}}]}
 
-        async def run_stream(self, args):
-            yield {"type": "text", "data": "partial"}
+        async def stream(self, req):
+            yield 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
             raise GrokRunError("upstream boom", 1, "upstream boom")
-            yield  # pragma: no cover
+            yield
 
     app = create_app(runner=StreamFailRunner(), api_key=None, max_concurrent=3)
     transport = ASGITransport(app=app)

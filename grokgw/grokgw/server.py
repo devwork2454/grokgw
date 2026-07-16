@@ -1,34 +1,34 @@
 from __future__ import annotations
+
 import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Protocol
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
 from grokgw.config import Settings
 from grokgw.grok_runner import GrokRunError
-from grokgw.mapping import to_cli_args, to_openai_response, to_sse_chunk
 from grokgw.models import ChatCompletionRequest, ModelInfo, ModelList
-from grokgw.sandbox import create as create_sandbox, cleanup as cleanup_sandbox
 
 _ALLOWED_MODELS = {"grok-4.5", "grok-build", "grok-latest"}
 
 
 class RunnerProtocol(Protocol):
-    async def run(self, args: list[str]) -> dict: ...
-    def run_stream(self, args: list[str]) -> AsyncIterator[dict]: ...
+    async def complete(self, req: ChatCompletionRequest) -> dict: ...
+    def stream(self, req: ChatCompletionRequest) -> AsyncIterator[str]: ...
 
 
 def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: int) -> FastAPI:
     import asyncio
+
     settings = Settings.from_env()
     sem = asyncio.Semaphore(max_concurrent)
-
     app = FastAPI(title="grokgw")
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        # healthz and docs bypass auth (liveness/readiness)
         if request.url.path in ("/healthz", "/", "/docs", "/openapi.json"):
             return await call_next(request)
         if api_key is not None:
@@ -43,7 +43,12 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
 
     @app.get("/healthz")
     async def healthz():
-        return {"status": "ok", "grok_binary": settings.grok_bin}
+        return {
+            "status": "ok",
+            "backend": settings.backend,
+            "upstream_base": settings.upstream_base if settings.backend == "proxy" else None,
+            "grok_binary": settings.grok_bin if settings.backend == "cli" else None,
+        }
 
     @app.get("/v1/models")
     async def list_models():
@@ -63,21 +68,17 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
             )
 
         async with sem:
-            sandbox_dir = create_sandbox(root=settings.sandbox_root)
-            req_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
-            args = to_cli_args(req, sandbox_dir=sandbox_dir, settings=settings, req_id=req_id)
             try:
                 if req.stream:
                     return StreamingResponse(
-                        _stream_response(runner, args, req_id, req.model, settings, sandbox_dir),
+                        _stream_response(runner, req),
                         media_type="text/event-stream",
                     )
-                else:
-                    data = await runner.run(args)
-                    return to_openai_response(data, req)
+                return await runner.complete(req)
             except GrokRunError as e:
                 stderr_lower = e.stderr.lower()
-                if "auth" in stderr_lower or "login" in stderr_lower or "credential" in stderr_lower:
+                msg = str(e).lower()
+                if any(k in stderr_lower or k in msg for k in ("auth", "login", "credential", "unauthorized", "expired")):
                     return JSONResponse(
                         status_code=401,
                         content={"error": {"message": "Grok auth expired. Run: grok login", "type": "authentication_error"}},
@@ -91,38 +92,22 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
                     status_code=504,
                     content={"error": {"message": str(e), "type": "timeout_error"}},
                 )
-            finally:
-                if not req.stream:
-                    cleanup_sandbox(sandbox_dir)
 
-    async def _stream_response(runner, args, req_id, model, settings, sandbox_dir):
+    async def _stream_response(runner: RunnerProtocol, req: ChatCompletionRequest):
         try:
-            async for event in runner.run_stream(args):
-                chunk = to_sse_chunk(event, req_id=req_id, model=model, settings=settings)
-                if chunk is not None:
-                    yield chunk
-            yield "data: [DONE]\n\n"
+            async for chunk in runner.stream(req):
+                yield chunk
         except GrokRunError as e:
-            err_chunk = to_sse_chunk(
-                {"type": "error", "message": str(e)},
-                req_id=req_id,
-                model=model,
-                settings=settings,
-            )
-            if err_chunk is not None:
-                yield err_chunk
+            payload = {
+                "error": {"message": str(e), "type": "upstream_error"},
+            }
+            yield f"data: {__import__('json').dumps(payload)}\n\n"
             yield "data: [DONE]\n\n"
         except TimeoutError as e:
-            err_chunk = to_sse_chunk(
-                {"type": "error", "message": str(e)},
-                req_id=req_id,
-                model=model,
-                settings=settings,
-            )
-            if err_chunk is not None:
-                yield err_chunk
+            payload = {
+                "error": {"message": str(e), "type": "timeout_error"},
+            }
+            yield f"data: {__import__('json').dumps(payload)}\n\n"
             yield "data: [DONE]\n\n"
-        finally:
-            cleanup_sandbox(sandbox_dir)
 
     return app
