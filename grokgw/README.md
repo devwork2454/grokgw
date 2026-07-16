@@ -9,15 +9,20 @@ OpenAI 兼容本地 API 网关,封装 Grok Build CLI(`grok -p`),复用 SuperGrok
 
 ## 快速部署
 
-### Docker Compose（推荐）
+### 一键安装（推荐）
 
 ```bash
-cd grokgw
-docker compose up -d
-# 默认监听 127.0.0.1:8787，auth.json 自动挂载
+./grokgw/install.sh
+# 自动检测 python/代理/auth · pip 安装 · 可选 systemd 自启
 ```
 
-### 本地安装
+### Docker Compose
+
+```bash
+cd grokgw && docker compose up -d
+```
+
+### 手动
 
 ```bash
 source antibot/.venv/bin/activate   # 或自建 venv
