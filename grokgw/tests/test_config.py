@@ -1,3 +1,5 @@
+import os
+
 from grokgw.config import Settings
 
 
@@ -45,3 +47,38 @@ def test_proxy_mode_invalid_falls_back_to_auto(monkeypatch):
     monkeypatch.setenv("GROKGW_PROXY_MODE", "bogus")
     s = Settings.from_env()
     assert s.proxy_mode == "auto"
+
+
+def test_media_defaults():
+    s = Settings()
+    assert s.media_enabled is True
+    assert s.sessions_root == os.path.expanduser("~/.grok/sessions")
+    assert s.public_base == "http://127.0.0.1:8787"
+
+
+def test_media_env_override(monkeypatch):
+    monkeypatch.setenv("GROKGW_MEDIA", "0")
+    monkeypatch.setenv("GROKGW_SESSIONS_ROOT", "/tmp/fake-sessions")
+    monkeypatch.setenv("GROKGW_PUBLIC_BASE", "http://example.local:9000")
+    monkeypatch.setenv("GROKGW_HOST", "0.0.0.0")
+    monkeypatch.setenv("GROKGW_PORT", "9000")
+    s = Settings.from_env()
+    assert s.media_enabled is False
+    assert s.sessions_root == "/tmp/fake-sessions"
+    assert s.public_base == "http://example.local:9000"
+
+
+def test_media_enabled_timeout_default_when_unset(monkeypatch):
+    monkeypatch.delenv("GROKGW_TIMEOUT", raising=False)
+    monkeypatch.setenv("GROKGW_MEDIA", "1")
+    s = Settings.from_env()
+    assert s.media_enabled is True
+    assert s.timeout == 300
+
+
+def test_explicit_timeout_wins(monkeypatch):
+    monkeypatch.setenv("GROKGW_MEDIA", "1")
+    monkeypatch.setenv("GROKGW_TIMEOUT", "90")
+    s = Settings.from_env()
+    assert s.timeout == 90
+
