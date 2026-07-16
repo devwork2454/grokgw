@@ -115,3 +115,51 @@ async def test_run_no_proxy_when_disabled(monkeypatch):
     env = captured["env"]
     if env is not None:
         assert "ALL_PROXY" not in env or env.get("ALL_PROXY") != "socks5h://127.0.0.1:2080"
+
+
+async def test_complete_rewrites_media_paths(monkeypatch):
+    from grokgw.models import ChatCompletionRequest, Message
+    json_out = (
+        b'{"text":"Here: images/1.jpg","stopReason":"EndTurn",'
+        b'"sessionId":"sess-abc","requestId":"q1"}\n'
+    )
+    proc = MockProc(stdout_lines=[json_out], returncode=0)
+    async def fake_create(*args, **kwargs):
+        return proc
+    monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
+    r = GrokRunner(
+        Settings(
+            media_enabled=True,
+            public_base="http://127.0.0.1:8787",
+            grok_cwd="/tmp",
+            timeout=5,
+        )
+    )
+    req = ChatCompletionRequest(
+        model="grok-4.5",
+        messages=[Message(role="user", content="draw")],
+    )
+    resp = await r.complete(req)
+    content = resp["choices"][0]["message"]["content"]
+    assert content == "Here: http://127.0.0.1:8787/v1/media/sessions/sess-abc/images/1.jpg"
+
+
+async def test_complete_no_rewrite_when_media_disabled(monkeypatch):
+    from grokgw.models import ChatCompletionRequest, Message
+    json_out = (
+        b'{"text":"Here: images/1.jpg","stopReason":"EndTurn",'
+        b'"sessionId":"sess-abc","requestId":"q1"}\n'
+    )
+    proc = MockProc(stdout_lines=[json_out], returncode=0)
+    async def fake_create(*args, **kwargs):
+        return proc
+    monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
+    r = GrokRunner(
+        Settings(media_enabled=False, public_base="http://127.0.0.1:8787", grok_cwd="/tmp")
+    )
+    req = ChatCompletionRequest(
+        model="grok-4.5",
+        messages=[Message(role="user", content="draw")],
+    )
+    resp = await r.complete(req)
+    assert resp["choices"][0]["message"]["content"] == "Here: images/1.jpg"

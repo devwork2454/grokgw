@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 
 from grokgw.config import Settings
 from grokgw.mapping import to_cli_args, to_openai_response, to_sse_chunk
+from grokgw.media import rewrite_media_paths
 from grokgw.models import ChatCompletionRequest
 from grokgw.sandbox import cleanup as cleanup_sandbox
 from grokgw.sandbox import create as create_sandbox
@@ -34,6 +35,18 @@ class GrokRunner:
                 req_id="cli",
             )
             data = await self.run(args)
+            if self._settings.media_enabled:
+                sid = data.get("sessionId") or ""
+                text = data.get("text") or ""
+                if sid and text:
+                    data = {
+                        **data,
+                        "text": rewrite_media_paths(
+                            text,
+                            base=self._settings.public_base,
+                            session_id=sid,
+                        ),
+                    }
             return to_openai_response(data, req)
         finally:
             if sandbox_dir != self._settings.grok_cwd:
