@@ -133,3 +133,17 @@ When probing a site, the JS template in `run_takeover.py:collect_fingerprint()` 
 - Plan: `docs/superpowers/plans/2026-07-15-browser-ops-runtime-p0.md`
 - Never rmtree `data/profiles/*` operational dirs.
 - Antibot scripts remain the fingerprint lab; prefer `runtime regress` for regression.
+
+## Grok API Gateway (grokgw)
+
+- Package: `grokgw/` - OpenAI-compatible local API gateway wrapping Grok Build CLI.
+- Reuses SuperGrok subscription auth (`~/.grok/auth.json`), no API key needed.
+- Entry: from repo root with venv active:
+  ```bash
+  source antibot/.venv/bin/activate
+  python -m grokgw
+  ```
+- Spec: `docs/superpowers/specs/2026-07-15-grok-api-gateway-design.md`
+- Plan: `docs/superpowers/plans/2026-07-15-grok-api-gateway.md`
+- Each request runs `grok -p` in an isolated empty `/tmp` dir (avoids repo-upload privacy risk).
+- No function calling; no multi-account token pool (M3+ evolution).
