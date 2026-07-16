@@ -94,6 +94,7 @@ charon add opencode --name grokgw --key dummy \
 | `GROKGW_HOST` | `127.0.0.1` | 监听地址 |
 | `GROKGW_PORT` | `8787` | 监听端口 |
 | `GROKGW_PROXY_URL` | `socks5h://127.0.0.1:2080` | 上游代理；设空禁用 |
+| `GROKGW_PROXY_MODE` | `auto` | `auto`:直连优先→代理回退 `always`:始终代理 `never`:禁用代理 |
 | `GROKGW_API_KEY` | 无 | 客户端 Bearer 认证 |
 | `GROKGW_MAX_CONCURRENT` | `3` | 最大并发 |
 | `GROKGW_TIMEOUT` | `120` | 请求超时(秒) |

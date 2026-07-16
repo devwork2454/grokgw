@@ -9,14 +9,70 @@ from grokgw.config import Settings
 from grokgw.grok_runner import GrokRunError
 from grokgw.models import ChatCompletionRequest
 
+_PROBE_TIMEOUT = 8
+
+
+class _NotSet:
+    pass
+
 
 class ProxyRunner:
-    """OpenAI-compatible upstream via curl subprocess — reuses socks5h proxy like vpn."""
-
     def __init__(self, settings: Settings):
         self._settings = settings
+        self._resolved: str | None | _NotSet = _NotSet()
 
-    def _build_curl(self, req: ChatCompletionRequest, stream: bool) -> list[str]:
+    async def _probe(self, url: str, proxy_url: str | None) -> bool:
+        probe_url = url.rstrip("/") + "/models"
+        cmd = ["curl", "-sS", "--max-time", str(_PROBE_TIMEOUT), "-o", "/dev/null", "-w", "%{http_code}"]
+        if proxy_url:
+            cmd += ["-x", proxy_url]
+        cmd.append(probe_url)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT + 2)
+        except (asyncio.TimeoutError, OSError):
+            return False
+        code = stdout.decode(errors="replace").strip()
+        return code.isdigit() and 200 <= int(code) < 500
+
+    async def _resolve_proxy(self) -> str | None:
+        mode = self._settings.proxy_mode
+        upstream = self._settings.upstream_base
+        proxy = self._settings.proxy_url
+        if mode == "always":
+            return proxy
+        if mode == "never":
+            return None
+        direct_ok = await self._probe(upstream, proxy_url=None)
+        if direct_ok:
+            return None
+        if not proxy:
+            raise GrokRunError(
+                "direct connection failed and no proxy configured; "
+                "set GROKGW_PROXY_URL or use GROKGW_PROXY_MODE=never if you have direct access",
+                502,
+                "no route to upstream",
+            )
+        proxy_ok = await self._probe(upstream, proxy_url=proxy)
+        if proxy_ok:
+            return proxy
+        raise GrokRunError(
+            f"cannot reach {upstream} (direct and proxy both failed); "
+            f"check network or GROKGW_PROXY_URL={proxy}",
+            502,
+            "no route to upstream",
+        )
+
+    async def _get_proxy(self) -> str | None:
+        if isinstance(self._resolved, _NotSet):
+            self._resolved = await self._resolve_proxy()
+        return self._resolved
+
+    def _build_curl(self, req: ChatCompletionRequest, stream: bool, proxy: str | None) -> list[str]:
         try:
             token = ensure_access_token(self._settings.auth_path)
         except AuthError as e:
@@ -29,35 +85,24 @@ class ProxyRunner:
             **({} if req.reasoning_effort is None else {"reasoning_effort": req.reasoning_effort}),
         })
 
-        cmd = [
-            "curl", "-sS",
-            "--max-time", str(self._settings.timeout),
-        ]
-        if self._settings.proxy_url:
-            cmd += ["-x", self._settings.proxy_url]
-        cmd += [
-            "-H", f"Authorization: Bearer {token}",
-            "-H", "Content-Type: application/json",
-        ]
+        cmd = ["curl", "-sS", "--max-time", str(self._settings.timeout)]
+        if proxy:
+            cmd += ["-x", proxy]
+        cmd += ["-H", f"Authorization: Bearer {token}", "-H", "Content-Type: application/json"]
         if stream:
             cmd.append("-N")
-        cmd += [
-            "-d", payload,
-            f"{self._settings.upstream_base}/chat/completions",
-        ]
+        cmd += ["-d", payload, f"{self._settings.upstream_base}/chat/completions"]
         return cmd
 
     async def complete(self, req: ChatCompletionRequest) -> dict:
-        cmd = self._build_curl(req.model_copy(update={"stream": False}), stream=False)
+        proxy = await self._get_proxy()
+        cmd = self._build_curl(req.model_copy(update={"stream": False}), stream=False, proxy=proxy)
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=self._settings.timeout + 5,
+                proc.communicate(), timeout=self._settings.timeout + 5,
             )
         except asyncio.TimeoutError:
             proc.kill()
@@ -66,29 +111,25 @@ class ProxyRunner:
 
         stdout_str = stdout.decode(errors="replace").strip()
         stderr_str = stderr.decode(errors="replace") if stderr else ""
-
         if not stdout_str:
             raise GrokRunError(f"upstream empty: {stderr_str[-300:]}", proc.returncode or 502, stderr_str)
         try:
             data = json.loads(stdout_str)
         except json.JSONDecodeError:
             raise GrokRunError(f"upstream invalid JSON: {stdout_str[:300]}", 502, stdout_str) from None
-
         if "error" in data and isinstance(data["error"], dict):
             msg = data["error"].get("message", str(data["error"]))
             status = 401 if any(k in msg.lower() for k in ("auth", "key", "unauthorized", "expired")) else 502
             raise GrokRunError(f"upstream error: {msg}", status, msg)
         if "error" in data and isinstance(data["error"], str):
             raise GrokRunError(f"upstream error: {data['error']}", 502, data["error"])
-
         return data
 
     async def stream(self, req: ChatCompletionRequest) -> AsyncIterator[str]:
-        cmd = self._build_curl(req.model_copy(update={"stream": True}), stream=True)
+        proxy = await self._get_proxy()
+        cmd = self._build_curl(req.model_copy(update={"stream": True}), stream=True, proxy=proxy)
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         try:
             assert proc.stdout is not None

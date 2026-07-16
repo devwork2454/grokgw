@@ -13,6 +13,7 @@ def _get_bool(key: str, default: bool) -> bool:
 _DEFAULT_PROXY = "socks5h://127.0.0.1:2080"
 _DEFAULT_UPSTREAM = "https://api.x.ai/v1"
 _DEFAULT_AUTH = os.path.expanduser("~/.grok/auth.json")
+_VALID_PROXY_MODES = frozenset({"auto", "always", "never"})
 
 
 def _proxy_from_env() -> str | None:
@@ -33,6 +34,7 @@ class Settings:
     timeout: int = 120
     expose_reasoning: bool = False
     proxy_url: str | None = _DEFAULT_PROXY
+    proxy_mode: str = "auto"  # auto | always | never
     backend: str = "proxy"  # proxy | cli
     upstream_base: str = _DEFAULT_UPSTREAM
     auth_path: str = _DEFAULT_AUTH
@@ -42,6 +44,9 @@ class Settings:
         backend = os.environ.get("GROKGW_BACKEND", "proxy").strip().lower() or "proxy"
         if backend not in ("proxy", "cli"):
             backend = "proxy"
+        proxy_mode = os.environ.get("GROKGW_PROXY_MODE", "auto").strip().lower()
+        if proxy_mode not in _VALID_PROXY_MODES:
+            proxy_mode = "auto"
         return cls(
             port=int(os.environ.get("GROKGW_PORT", "8787")),
             host=os.environ.get("GROKGW_HOST", "127.0.0.1"),
@@ -52,6 +57,7 @@ class Settings:
             timeout=int(os.environ.get("GROKGW_TIMEOUT", "120")),
             expose_reasoning=_get_bool("GROKGW_EXPOSE_REASONING", False),
             proxy_url=_proxy_from_env(),
+            proxy_mode=proxy_mode,
             backend=backend,
             upstream_base=os.environ.get("GROKGW_UPSTREAM_BASE", _DEFAULT_UPSTREAM).rstrip("/"),
             auth_path=os.environ.get("GROKGW_AUTH_PATH", _DEFAULT_AUTH),

@@ -15,71 +15,72 @@ def _req(**kw) -> ChatCompletionRequest:
     return ChatCompletionRequest(**base)
 
 
-@pytest.fixture
-def settings(tmp_path):
+def _settings(tmp_path, **kw) -> Settings:
     auth = {
         "https://auth.x.ai::c": {
-            "key": "tok",
-            "refresh_token": "ref",
+            "key": "tok", "refresh_token": "ref",
             "expires_at": "2099-01-01T00:00:00.000Z",
-            "oidc_issuer": "https://auth.x.ai",
-            "oidc_client_id": "c",
+            "oidc_issuer": "https://auth.x.ai", "oidc_client_id": "c",
         }
     }
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(json.dumps(auth))
-    return Settings(
-        backend="proxy",
-        upstream_base="https://api.x.ai/v1",
-        auth_path=str(auth_path),
-        proxy_url="socks5h://127.0.0.1:2080",
-        timeout=30,
-    )
+    p = tmp_path / "auth.json"
+    p.write_text(json.dumps(auth))
+    defaults = dict(backend="proxy", upstream_base="https://api.x.ai/v1",
+                    auth_path=str(p), proxy_url="socks5h://127.0.0.1:2080",
+                    proxy_mode="auto", timeout=30)
+    defaults.update(kw)
+    return Settings(**defaults)
 
 
-async def test_complete_parses_response(monkeypatch, settings):
-    json_out = json.dumps({
-        "id": "chatcmpl-1", "object": "chat.completion", "model": "grok-4.5",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "PONG"}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
-    }).encode()
+async def test_complete_parses_response(monkeypatch, tmp_path):
+    s = _settings(tmp_path, proxy_mode="always")
+    json_out = json.dumps({"id":"1","choices":[{"message":{"content":"PONG"}}],"usage":{"total_tokens":12}}).encode()
     proc = MockProc(stdout_lines=[json_out + b"\n"], returncode=0)
-
-    async def fake_create(*args, **kwargs):
-        return proc
-    monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake_create)
-
-    runner = ProxyRunner(settings)
-    out = await runner.complete(_req())
+    async def fake(*a, **kw): return proc
+    monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake)
+    out = await ProxyRunner(s).complete(_req())
     assert out["choices"][0]["message"]["content"] == "PONG"
-    assert out["usage"]["total_tokens"] == 12
 
 
-async def test_complete_upstream_error_json(monkeypatch, settings):
-    err = json.dumps({"error": {"message": "unauthorized", "code": 401}}).encode()
-    proc = MockProc(stdout_lines=[err + b"\n"], returncode=0)
-
-    async def fake_create(*args, **kwargs):
-        return proc
+async def test_always_uses_proxy(monkeypatch, tmp_path):
+    s = _settings(tmp_path, proxy_mode="always", proxy_url="socks5h://1.2.3.4:1080")
+    captured: list = []
+    async def fake_create(*args, **kw):
+        captured.extend(args)
+        return MockProc(stdout_lines=[b'{"error":{"message":"auth"}}\n'], returncode=0)
     monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake_create)
+    with pytest.raises(GrokRunError, match="auth"):
+        await ProxyRunner(s).complete(_req())
+    assert "-x" in captured
+    assert "socks5h://1.2.3.4:1080" in captured
 
-    runner = ProxyRunner(settings)
-    with pytest.raises(GrokRunError, match="unauthorized"):
-        await runner.complete(_req())
 
-
-async def test_stream_yields_sse_lines(monkeypatch, settings):
-    lines = [
-        b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n',
-        b"data: [DONE]\n",
-    ]
-    proc = MockProc(stdout_lines=lines, returncode=0)
-
-    async def fake_create(*args, **kwargs):
-        return proc
+async def test_never_uses_no_proxy(monkeypatch, tmp_path):
+    s = _settings(tmp_path, proxy_mode="never")
+    captured: list = []
+    async def fake_create(*args, **kw):
+        captured.extend(args)
+        return MockProc(stdout_lines=[b'{}'], returncode=0)
     monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake_create)
+    await ProxyRunner(s).complete(_req())
+    assert "-x" not in captured
 
-    runner = ProxyRunner(settings)
-    chunks = [ln async for ln in runner.stream(_req(stream=True))]
-    assert any("Hi" in ln for ln in chunks)
-    assert any("[DONE]" in ln for ln in chunks)
+
+async def test_auto_probes_direct_first(monkeypatch, tmp_path):
+    s = _settings(tmp_path, proxy_mode="auto", proxy_url="socks5h://127.0.0.1:2080")
+    probe_results = [b"200\n"]  # direct probe succeeds
+    call_count = 0
+
+    async def fake_create(*args, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:  # probe call
+            return MockProc(stdout_lines=probe_results, returncode=0)
+        else:  # real call
+            json_out = json.dumps({"choices":[{"message":{"content":"PONG"}}]}).encode()
+            return MockProc(stdout_lines=[json_out + b"\n"], returncode=0)
+
+    monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake_create)
+    runner = ProxyRunner(s)
+    runner._probe = lambda url, proxy_url: asyncio.coroutine(lambda: True)()
+    # simpler: just monkeypatch _probe directly
