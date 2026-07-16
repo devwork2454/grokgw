@@ -2,8 +2,8 @@ from __future__ import annotations
 import time
 import uuid
 from typing import Protocol
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from grokgw.config import Settings
 from grokgw.mapping import to_cli_args, to_openai_response, to_sse_chunk
 from grokgw.models import ChatCompletionRequest, ModelInfo, ModelList
@@ -23,6 +23,21 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
     sem = asyncio.Semaphore(max_concurrent)
 
     app = FastAPI(title="grokgw")
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        # healthz and docs bypass auth (liveness/readiness)
+        if request.url.path in ("/healthz", "/", "/docs", "/openapi.json"):
+            return await call_next(request)
+        if api_key is not None:
+            auth = request.headers.get("Authorization", "")
+            token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+            if token != api_key:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": {"message": "invalid API key", "type": "invalid_request_error"}},
+                )
+        return await call_next(request)
 
     @app.get("/healthz")
     async def healthz():

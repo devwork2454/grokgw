@@ -70,3 +70,58 @@ async def test_invalid_request_body(client):
         # missing messages
     })
     assert resp.status_code == 422
+
+
+async def test_chat_stream(client):
+    resp = await client.post("/v1/chat/completions", json={
+        "model": "grok-4.5",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    })
+    assert resp.status_code == 200
+    body = resp.text
+    assert "data: " in body
+    assert "Hello" in body
+    assert "data: [DONE]" in body
+
+
+@pytest.fixture
+def authed_app():
+    return create_app(runner=FakeRunner(), api_key="secret-key", max_concurrent=3)
+
+
+@pytest.fixture
+async def authed_client(authed_app):
+    transport = ASGITransport(app=authed_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def test_auth_missing_key(authed_client):
+    resp = await authed_client.post("/v1/chat/completions", json={
+        "model": "grok-4.5",
+        "messages": [{"role": "user", "content": "x"}],
+    })
+    assert resp.status_code == 401
+
+
+async def test_auth_wrong_key(authed_client):
+    resp = await authed_client.post("/v1/chat/completions", json={
+        "model": "grok-4.5",
+        "messages": [{"role": "user", "content": "x"}],
+    }, headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 401
+
+
+async def test_auth_correct_key(authed_client):
+    resp = await authed_client.post("/v1/chat/completions", json={
+        "model": "grok-4.5",
+        "messages": [{"role": "user", "content": "x"}],
+    }, headers={"Authorization": "Bearer secret-key"})
+    assert resp.status_code == 200
+
+
+async def test_healthz_no_auth_required(authed_client):
+    """healthz should work even when API key is set (liveness probe)."""
+    resp = await authed_client.get("/healthz")
+    assert resp.status_code == 200
