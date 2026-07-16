@@ -1,15 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-BOLD="\033[1m"; GREEN="\033[32m"; RED="\033[31m"; RESET="\033[0m"
+BOLD="\033[1m"; GREEN="\033[32m"; RED="\033[31m"; YELLOW="\033[33m"; RESET="\033[0m"
+fail() { echo -e "${RED}✗ $1${RESET}"; exit 1; }
+ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
+warn() { echo -e "  ${YELLOW}⚠${RESET}  $1"; }
 
 echo -e "${BOLD}grokgw installer${RESET}"
 echo ""
 
 # --- prerequisites ---
-fail() { echo -e "${RED}✗ $1${RESET}"; exit 1; }
-ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
-
 command -v python3 >/dev/null || fail "python3 not found"
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,12) else 1)' \
   || fail "Python 3.12+ required (got $(python3 --version))"
@@ -18,36 +18,43 @@ ok "python3 $(python3 --version | awk '{print $2}')"
 command -v curl >/dev/null || fail "curl not found"
 ok "curl"
 
-# auth check (warn only, grok login can be done later)
-AUTH="${HOME}/.grok/auth.json"
-if [ -f "$AUTH" ]; then
-  ok "auth.json found"
+command -v git >/dev/null || warn "git not found (skip auto-clone)" || true
+
+# --- source ---
+REPO_URL="https://github.com/devwork2454/grokgw.git"
+if [ -f "${BASH_SOURCE[0]:-}" ] && [ -d "$(dirname "${BASH_SOURCE[0]}")/../grokgw" ] 2>/dev/null; then
+  # running from cloned repo
+  SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  ok "local source: $SRC"
+elif [ -d "./grokgw" ] && [ -f "./grokgw/pyproject.toml" ]; then
+  SRC="$(pwd)/grokgw"
+  ok "local source: $SRC"
 else
-  echo -e "  ${RED}⚠${RESET}  auth.json not found — run 'grok login' before starting"
+  # clone from GitHub
+  echo "  cloning $REPO_URL ..."
+  git clone --depth 1 "$REPO_URL" /tmp/grokgw-install 2>/dev/null || fail "git clone failed"
+  SRC="/tmp/grokgw-install/grokgw"
+  ok "cloned to $SRC"
 fi
 
-# proxy check (warn only)
-if ss -tlnp 2>/dev/null | grep -q ':2080'; then
-  ok "proxy :2080 listening"
-else
-  echo -e "  ${RED}⚠${RESET}  no proxy on :2080 — set GROKGW_PROXY_URL or fix network"
-fi
+# --- auth check ---
+AUTH="${HOME}/.grok/auth.json"
+[ -f "$AUTH" ] && ok "auth.json found" || warn "not found — run 'grok login' before starting"
+
+# --- proxy check ---
+ss -tlnp 2>/dev/null | grep -q ':2080' && ok "proxy :2080" || warn "no proxy — set GROKGW_PROXY_URL"
 
 # --- install ---
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo ""
-echo "installing grokgw from $SCRIPT_DIR ..."
-pip3 install -e "$SCRIPT_DIR" --break-system-packages -q 2>/dev/null \
-  || pip3 install -e "$SCRIPT_DIR" -q
+echo "installing ..."
+pip3 install -e "$SRC" --break-system-packages -q 2>/dev/null \
+  || pip3 install -e "$SRC" -q
 ok "grokgw installed"
 
-# --- systemd (optional) ---
-echo ""
-read -p "install systemd service? [Y/n] " -r REPLY
-if [[ ! "$REPLY" =~ ^[Nn] ]]; then
-  UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-  mkdir -p "$UNIT_DIR"
-  cat > "$UNIT_DIR/grokgw.service" << UNIT
+# --- systemd ---
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+mkdir -p "$UNIT_DIR"
+cat > "$UNIT_DIR/grokgw.service" << UNIT
 [Unit]
 Description=grokgw — Grok OpenAI-compatible API gateway
 After=network-online.target
@@ -69,11 +76,15 @@ RestartSec=10
 WantedBy=default.target
 UNIT
 
-  systemctl --user daemon-reload
-  systemctl --user enable --now grokgw 2>/dev/null && ok "systemd service started" \
-    || echo -e "  ${RED}⚠${RESET}  systemd not available; start manually: python -m grokgw"
+systemctl --user daemon-reload 2>/dev/null || true
+if systemctl --user enable --now grokgw 2>/dev/null; then
+  ok "systemd service started"
+else
+  warn "systemd unavailable — start manually:"
+  echo "  ALL_PROXY=socks5h://127.0.0.1:2080 all_proxy=socks5h://127.0.0.1:2080 GROKGW_BACKEND=cli python -m grokgw &"
 fi
 
 echo ""
-echo -e "${GREEN}✓${RESET} Done. Test it:"
-echo "  curl http://127.0.0.1:8787/healthz"
+echo -e "${GREEN}✓ Done${RESET}"
+echo "  healthz: curl http://127.0.0.1:8787/healthz"
+echo "  chat:    curl http://127.0.0.1:8787/v1/chat/completions -H 'Content-Type: application/json' -d '{\"model\":\"grok-4.5\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
