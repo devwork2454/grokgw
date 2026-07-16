@@ -48,6 +48,7 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
             "backend": settings.backend,
             "upstream_base": settings.upstream_base if settings.backend == "proxy" else None,
             "grok_binary": settings.grok_bin if settings.backend == "cli" else None,
+            "grok_cwd": settings.grok_cwd if settings.backend == "cli" else "(sandbox)",
             "proxy_url": settings.proxy_url if settings.backend == "proxy" else None,
             "proxy_mode": settings.proxy_mode if settings.backend == "proxy" else None,
         }

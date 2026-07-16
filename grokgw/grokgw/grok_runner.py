@@ -25,7 +25,7 @@ class GrokRunner:
         self._settings = settings
 
     async def complete(self, req: ChatCompletionRequest) -> dict:
-        sandbox_dir = create_sandbox(root=self._settings.sandbox_root)
+        sandbox_dir = self._resolve_cwd()
         try:
             args = to_cli_args(
                 req.model_copy(update={"stream": False}),
@@ -36,10 +36,11 @@ class GrokRunner:
             data = await self.run(args)
             return to_openai_response(data, req)
         finally:
-            cleanup_sandbox(sandbox_dir)
+            if sandbox_dir != self._settings.grok_cwd:
+                cleanup_sandbox(sandbox_dir)
 
     async def stream(self, req: ChatCompletionRequest) -> AsyncIterator[str]:
-        sandbox_dir = create_sandbox(root=self._settings.sandbox_root)
+        sandbox_dir = self._resolve_cwd()
         req_id = f"chatcmpl-cli"
         try:
             args = to_cli_args(
@@ -76,7 +77,13 @@ class GrokRunner:
                 yield err
             yield "data: [DONE]\n\n"
         finally:
-            cleanup_sandbox(sandbox_dir)
+            if sandbox_dir != self._settings.grok_cwd:
+                cleanup_sandbox(sandbox_dir)
+
+    def _resolve_cwd(self) -> str:
+        if self._settings.grok_cwd:
+            return self._settings.grok_cwd
+        return create_sandbox(root=self._settings.sandbox_root)
 
     def _subprocess_env(self) -> dict[str, str] | None:
         proxy = self._settings.proxy_url
