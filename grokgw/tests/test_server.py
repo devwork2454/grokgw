@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from grokgw.config import Settings
 from grokgw.grok_runner import GrokRunError
 from grokgw.server import create_app
 
@@ -240,3 +243,70 @@ async def test_stream_runner_error_emits_sse_error_frame():
         assert "partial" in body
         assert "upstream boom" in body or "error" in body
         assert "data: [DONE]" in body
+
+
+def _app_with_sessions(tmp_path: Path, api_key: str | None = None):
+    sid = "019f69f6-cf7f-7711-b38e-45b3cecc1762"
+    img = tmp_path / "%2Ftmp" / sid / "images" / "1.jpg"
+    img.parent.mkdir(parents=True)
+    img.write_bytes(b"\xff\xd8\xffJPEGTEST")
+    settings = Settings(
+        media_enabled=True,
+        sessions_root=str(tmp_path),
+        public_base="http://test",
+        api_key=api_key,
+    )
+    return create_app(
+        runner=FakeRunner(),
+        api_key=api_key,
+        max_concurrent=3,
+        settings=settings,
+    ), sid
+
+
+async def test_media_image_ok(tmp_path: Path):
+    app, sid = _app_with_sessions(tmp_path)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get(f"/v1/media/sessions/{sid}/images/1.jpg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/jpeg")
+    assert resp.content.startswith(b"\xff\xd8")
+
+
+async def test_media_image_missing_404(tmp_path: Path):
+    app, sid = _app_with_sessions(tmp_path)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get(f"/v1/media/sessions/{sid}/images/99.jpg")
+    assert resp.status_code == 404
+
+
+async def test_media_path_traversal_rejected(tmp_path: Path):
+    app, sid = _app_with_sessions(tmp_path)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/v1/media/sessions/../etc/images/1.jpg")
+    assert resp.status_code in (400, 404, 422)
+
+
+async def test_media_requires_api_key_when_set(tmp_path: Path):
+    app, sid = _app_with_sessions(tmp_path, api_key="secret-key")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get(f"/v1/media/sessions/{sid}/images/1.jpg")
+        assert resp.status_code == 401
+        resp2 = await c.get(
+            f"/v1/media/sessions/{sid}/images/1.jpg",
+            headers={"Authorization": "Bearer secret-key"},
+        )
+        assert resp2.status_code == 200
+
+
+async def test_healthz_includes_media_flag(tmp_path: Path):
+    app, _ = _app_with_sessions(tmp_path)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json().get("media_enabled") is True
