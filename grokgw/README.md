@@ -4,27 +4,31 @@ OpenAI 兼容本地 API 网关,封装 Grok Build CLI(`grok -p`),复用 SuperGrok
 
 ## 前提
 
-- `grok` CLI 已安装(`~/.grok/bin/grok`)且已登录(`~/.grok/auth.json` 存在)
-- Python 3.12+
-- 本机 socks5 代理可用(默认 `127.0.0.1:2080`;IPv6 出口异常时必须)
+- 本机已登录 Grok(`~/.grok/auth.json` 存在)
+- Python 3.12+ / Docker
 
-## 安装
+## 快速部署
+
+### Docker Compose（推荐）
+
+```bash
+cd grokgw
+docker compose up -d
+# 默认监听 127.0.0.1:8787，auth.json 自动挂载
+```
+
+### 本地安装
 
 ```bash
 source antibot/.venv/bin/activate   # 或自建 venv
 pip install -e ./grokgw
-pip install pytest pytest-asyncio httpx   # dev
 ```
 
 ## 运行
 
 ```bash
-# 默认会把 socks5h://127.0.0.1:2080 注入 grok 子进程
-python -m grokgw
-# 默认监听 127.0.0.1:8787
-
-# 禁用代理(仅当本机直连可用时)
-GROKGW_PROXY_URL= python -m grokgw
+python -m grokgw                     # proxy 默认(~1.5s)
+GROKGW_BACKEND=cli python -m grokgw  # CLI 后备(~6s，有隐私沙箱)
 ```
 
 ## 使用

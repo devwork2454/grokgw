@@ -1,0 +1,15 @@
+services:
+  grokgw:
+    build: .
+    container_name: grokgw
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ~/.grok/auth.json:/auth/auth.json:ro
+    environment:
+      - GROKGW_PROXY_URL=${GROKGW_PROXY_URL:-socks5h://host.docker.internal:2080}
+      - GROKGW_UPSTREAM_BASE=${GROKGW_UPSTREAM_BASE:-https://api.x.ai/v1}
+      - GROKGW_API_KEY=${GROKGW_API_KEY:-}
+      - GROKGW_MAX_CONCURRENT=${GROKGW_MAX_CONCURRENT:-3}
+      - GROKGW_TIMEOUT=${GROKGW_TIMEOUT:-120}
+    restart: unless-stopped
