@@ -5,6 +5,7 @@ from typing import Protocol
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from grokgw.config import Settings
+from grokgw.grok_runner import GrokRunError
 from grokgw.mapping import to_cli_args, to_openai_response, to_sse_chunk
 from grokgw.models import ChatCompletionRequest, ModelInfo, ModelList
 from grokgw.sandbox import create as create_sandbox, cleanup as cleanup_sandbox
@@ -73,6 +74,22 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
                 else:
                     data = await runner.run(args)
                     return to_openai_response(data, req)
+            except GrokRunError as e:
+                stderr_lower = e.stderr.lower()
+                if "auth" in stderr_lower or "login" in stderr_lower or "credential" in stderr_lower:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"error": {"message": "Grok auth expired. Run: grok login", "type": "authentication_error"}},
+                    )
+                return JSONResponse(
+                    status_code=502,
+                    content={"error": {"message": str(e), "type": "upstream_error"}},
+                )
+            except TimeoutError as e:
+                return JSONResponse(
+                    status_code=504,
+                    content={"error": {"message": str(e), "type": "timeout_error"}},
+                )
             finally:
                 if not req.stream:
                     cleanup_sandbox(sandbox_dir)

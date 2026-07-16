@@ -125,3 +125,75 @@ async def test_healthz_no_auth_required(authed_client):
     """healthz should work even when API key is set (liveness probe)."""
     resp = await authed_client.get("/healthz")
     assert resp.status_code == 200
+
+
+from grokgw.grok_runner import GrokRunError
+
+
+class AuthFailRunner:
+    """Runner that simulates grok auth failure."""
+    async def run(self, args):
+        raise GrokRunError("grok exited with code 1: auth error: please run grok login", 1, "auth error")
+    async def run_stream(self, args):
+        raise GrokRunError("auth error", 1, "auth error")
+        yield  # make it a generator
+
+
+@pytest.fixture
+def authfail_app():
+    return create_app(runner=AuthFailRunner(), api_key=None, max_concurrent=3)
+
+
+@pytest.fixture
+async def authfail_client(authfail_app):
+    transport = ASGITransport(app=authfail_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def test_auth_expired_returns_401(authfail_client):
+    resp = await authfail_client.post("/v1/chat/completions", json={
+        "model": "grok-4.5",
+        "messages": [{"role": "user", "content": "x"}],
+    })
+    assert resp.status_code == 401
+    data = resp.json()
+    assert "grok login" in data["error"]["message"].lower()
+
+
+async def test_generic_runner_error_returns_502():
+    class FailRunner:
+        async def run(self, args):
+            raise GrokRunError("grok exited with code 1: some other error", 1, "error")
+        async def run_stream(self, args):
+            raise GrokRunError("error", 1, "error")
+            yield
+
+    app = create_app(runner=FailRunner(), api_key=None, max_concurrent=3)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.post("/v1/chat/completions", json={
+            "model": "grok-4.5",
+            "messages": [{"role": "user", "content": "x"}],
+        })
+        assert resp.status_code == 502
+
+
+async def test_timeout_returns_504():
+    import asyncio as aio
+
+    class TimeoutRunner:
+        async def run(self, args):
+            raise TimeoutError("grok timed out after 120s")
+        async def run_stream(self, args):
+            raise TimeoutError("timed out")
+            yield
+
+    app = create_app(runner=TimeoutRunner(), api_key=None, max_concurrent=3)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.post("/v1/chat/completions", json={
+            "model": "grok-4.5",
+            "messages": [{"role": "user", "content": "x"}],
+        })
+        assert resp.status_code == 504
