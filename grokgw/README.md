@@ -56,6 +56,7 @@ docker compose up -d
 |------|------|------|
 | `/v1/chat/completions` | POST | 流式 + 非流式，OpenAI 兼容 |
 | `/v1/models` | GET | 模型列表 |
+| `/v1/media/sessions/{session_id}/images\|videos/{file}` | GET | 提供 CLI 会话落盘的图片/视频 |
 | `/healthz` | GET | 健康检查 |
 
 ### OpenAI SDK
@@ -84,6 +85,14 @@ charon add opencode --name grokgw --key dummy \
   --endpoint http://127.0.0.1:8787/v1 --model grok-4.5
 ```
 
+### 图片（CLI 后端）
+
+`GROKGW_BACKEND=cli` 时，模型生成的 `images/N.jpg` 会改写为：
+
+`http://127.0.0.1:8787/v1/media/sessions/<sessionId>/images/N.jpg`
+
+文件来自本机 `~/.grok/sessions`，与 sandbox 清理无关。生成较慢，请设 `GROKGW_TIMEOUT=300` 或依赖 media 默认超时。
+
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
@@ -97,9 +106,12 @@ charon add opencode --name grokgw --key dummy \
 | `GROKGW_PROXY_MODE` | `auto` | `auto`:直连优先→代理回退 `always`:始终代理 `never`:禁用代理 |
 | `GROKGW_API_KEY` | 无 | 客户端 Bearer 认证 |
 | `GROKGW_MAX_CONCURRENT` | `3` | 最大并发 |
-| `GROKGW_TIMEOUT` | `120` | 请求超时(秒) |
+| `GROKGW_TIMEOUT` | `120` | 请求超时(秒)；开启 media 且未显式设置时默认 `300` |
 | `GROKGW_GROK_BIN` | `grok` | CLI 后端 grok 路径 |
 | `GROKGW_EXPOSE_REASONING` | `false` | 透传 reasoning_content |
+| `GROKGW_MEDIA` | `true` | 是否启用 media rewrite + 服务 |
+| `GROKGW_SESSIONS_ROOT` | `~/.grok/sessions` | grok session 根目录 |
+| `GROKGW_PUBLIC_BASE` | `http://{host}:{port}` | rewrite URL 的 base |
 
 ## 测试
 
@@ -107,7 +119,7 @@ charon add opencode --name grokgw --key dummy \
 source antibot/.venv/bin/activate   # 或自建 venv
 pip install -e ./grokgw
 pip install pytest pytest-asyncio
-python -m pytest grokgw/tests/ -v   # 55 单测
+python -m pytest grokgw/tests/ -v   # 80 单测
 ```
 
 ## 局限
