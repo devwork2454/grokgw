@@ -27,9 +27,13 @@ def to_cli_args(
         "-m", model,
         "--cwd", sandbox_dir,
         "--output-format", "streaming-json" if req.stream else "json",
-        "--disallowed-tools", "Agent,run_terminal_cmd,search_replace",
         "--no-memory",
+        "--always-approve",
     ]
+    if settings.grok_tools:
+        args += ["--tools", settings.grok_tools]
+    if settings.grok_disallowed_tools:
+        args += ["--disallowed-tools", settings.grok_disallowed_tools]
     if req.reasoning_effort:
         args += ["--reasoning-effort", req.reasoning_effort]
     return args

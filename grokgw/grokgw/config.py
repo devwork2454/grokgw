@@ -32,6 +32,8 @@ class Settings:
     api_key: str | None = None
     grok_bin: str = "grok"
     grok_cwd: str | None = None  # None = sandbox; set to path for real project access
+    grok_tools: str | None = None  # None = all tools; "--tools" allowlist (comma-separated)
+    grok_disallowed_tools: str | None = None  # None = no restrictions; "--disallowed-tools" blocklist
     timeout: int = 120
     expose_reasoning: bool = False
     proxy_url: str | None = _DEFAULT_PROXY
@@ -56,6 +58,8 @@ class Settings:
             api_key=os.environ.get("GROKGW_API_KEY"),
             grok_bin=os.environ.get("GROKGW_GROK_BIN", "grok"),
             grok_cwd=os.environ.get("GROKGW_CWD") or None,  # empty → None → sandbox
+            grok_tools=os.environ.get("GROKGW_TOOLS") or None,
+            grok_disallowed_tools=os.environ.get("GROKGW_DISALLOWED_TOOLS") or None,
             timeout=int(os.environ.get("GROKGW_TIMEOUT", "120")),
             expose_reasoning=_get_bool("GROKGW_EXPOSE_REASONING", False),
             proxy_url=_proxy_from_env(),

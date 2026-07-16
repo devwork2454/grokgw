@@ -28,8 +28,8 @@ def test_cli_args_single_user_message():
     assert "--output-format" in args
     assert "json" in args  # non-stream default
     assert "--no-memory" in args
-    assert "--disallowed-tools" in args
-    assert "Agent,run_terminal_cmd,search_replace" in args
+    assert "--always-approve" in args
+    assert "--disallowed-tools" not in args  # default: all tools available
 
 
 def test_cli_args_stream_uses_streaming_json():
