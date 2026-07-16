@@ -1,0 +1,75 @@
+from __future__ import annotations
+import time
+import uuid
+from typing import Protocol
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from grokgw.config import Settings
+from grokgw.mapping import to_cli_args, to_openai_response, to_sse_chunk
+from grokgw.models import ChatCompletionRequest, ModelInfo, ModelList
+from grokgw.sandbox import create as create_sandbox, cleanup as cleanup_sandbox
+
+_ALLOWED_MODELS = {"grok-4.5", "grok-build", "grok-latest"}
+
+
+class RunnerProtocol(Protocol):
+    async def run(self, args: list[str]) -> dict: ...
+    async def run_stream(self, args: list[str]): ...
+
+
+def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: int) -> FastAPI:
+    import asyncio
+    settings = Settings.from_env()
+    sem = asyncio.Semaphore(max_concurrent)
+
+    app = FastAPI(title="grokgw")
+
+    @app.get("/healthz")
+    async def healthz():
+        return {"status": "ok", "grok_binary": settings.grok_bin}
+
+    @app.get("/v1/models")
+    async def list_models():
+        now = int(time.time())
+        return ModelList(data=[
+            ModelInfo(id="grok-4.5", created=now),
+            ModelInfo(id="grok-build", created=now),
+            ModelInfo(id="grok-latest", created=now),
+        ])
+
+    @app.post("/v1/chat/completions")
+    async def chat_completions(req: ChatCompletionRequest):
+        if req.model not in _ALLOWED_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"model '{req.model}' not supported. Available: grok-4.5, grok-build, grok-latest",
+            )
+
+        async with sem:
+            sandbox_dir = create_sandbox(root=settings.sandbox_root)
+            req_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+            args = to_cli_args(req, sandbox_dir=sandbox_dir, settings=settings, req_id=req_id)
+            try:
+                if req.stream:
+                    return StreamingResponse(
+                        _stream_response(runner, args, req_id, req.model, settings, sandbox_dir),
+                        media_type="text/event-stream",
+                    )
+                else:
+                    data = await runner.run(args)
+                    return to_openai_response(data, req)
+            finally:
+                if not req.stream:
+                    cleanup_sandbox(sandbox_dir)
+
+    async def _stream_response(runner, args, req_id, model, settings, sandbox_dir):
+        try:
+            async for event in runner.run_stream(args):
+                chunk = to_sse_chunk(event, req_id=req_id, model=model, settings=settings)
+                if chunk is not None:
+                    yield chunk
+            yield "data: [DONE]\n\n"
+        finally:
+            cleanup_sandbox(sandbox_dir)
+
+    return app
