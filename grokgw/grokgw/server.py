@@ -6,10 +6,11 @@ from collections.abc import AsyncIterator
 from typing import Protocol
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from grokgw.config import Settings
 from grokgw.grok_runner import GrokRunError
+from grokgw.media import MediaPathError, resolve_media_file
 from grokgw.models import ChatCompletionRequest, ModelInfo, ModelList
 
 _ALLOWED_MODELS = {"grok-4.5", "grok-build", "grok-latest"}
@@ -20,10 +21,16 @@ class RunnerProtocol(Protocol):
     def stream(self, req: ChatCompletionRequest) -> AsyncIterator[str]: ...
 
 
-def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: int) -> FastAPI:
+def create_app(
+    *,
+    runner: RunnerProtocol,
+    api_key: str | None,
+    max_concurrent: int,
+    settings: Settings | None = None,
+) -> FastAPI:
     import asyncio
 
-    settings = Settings.from_env()
+    settings = settings or Settings.from_env()
     sem = asyncio.Semaphore(max_concurrent)
     app = FastAPI(title="grokgw")
 
@@ -51,6 +58,9 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
             "grok_cwd": settings.grok_cwd if settings.backend == "cli" else "(sandbox)",
             "proxy_url": settings.proxy_url if settings.backend == "proxy" else None,
             "proxy_mode": settings.proxy_mode if settings.backend == "proxy" else None,
+            "media_enabled": settings.media_enabled,
+            "sessions_root": settings.sessions_root if settings.media_enabled else None,
+            "public_base": settings.public_base if settings.media_enabled else None,
         }
 
     @app.get("/v1/models")
@@ -61,6 +71,24 @@ def create_app(*, runner: RunnerProtocol, api_key: str | None, max_concurrent: i
             ModelInfo(id="grok-build", created=now),
             ModelInfo(id="grok-latest", created=now),
         ])
+
+    @app.get("/v1/media/sessions/{session_id}/{kind}/{filename}")
+    async def get_media(session_id: str, kind: str, filename: str):
+        if not settings.media_enabled:
+            raise HTTPException(status_code=404, detail="media disabled")
+        try:
+            path = resolve_media_file(settings.sessions_root, session_id, kind, filename)
+        except MediaPathError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        media_types = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".mp4": "video/mp4",
+        }
+        mt = media_types.get(path.suffix.lower(), "application/octet-stream")
+        return FileResponse(path, media_type=mt)
 
     @app.post("/v1/chat/completions")
     async def chat_completions(req: ChatCompletionRequest):

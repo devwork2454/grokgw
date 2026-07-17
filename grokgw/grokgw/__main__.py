@@ -21,6 +21,7 @@ def main():
         runner=runner,
         api_key=settings.api_key,
         max_concurrent=settings.max_concurrent,
+        settings=settings,
     )
     uvicorn.run(app, host=settings.host, port=settings.port)
 
