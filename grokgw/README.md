@@ -124,7 +124,7 @@ python -m pytest grokgw/tests/ -v   # 80 单测
 
 ## 局限
 
-- **不支持 function calling**（CLI headless 固有局限；proxy 后端理论上支持但未实现）
+- **proxy 后端透传 OpenAI `tools` / `tool_calls` / `role:tool`**（原生 function calling 依赖上游与客户端）；CLI 后端仍无原生 function calling
 - CLI 后端每请求 spawn `grok` 进程，cold start 2–5s，适合低并发
 - SuperGrok token 7 天过期，需 `grok login` 刷新
 - 非流式响应 usage 来自上游透传（212 prompt tokens），CLI 后端 ~12K agent prompt

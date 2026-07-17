@@ -110,6 +110,55 @@ async def test_chat_stream(client):
     assert "data: [DONE]" in body
 
 
+async def test_chat_accepts_tools_payload(client):
+    """HTTP entry must not 422 on OpenAI tools + tool role messages."""
+    resp = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "grok-4.5",
+            "messages": [
+                {"role": "user", "content": "list files"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "bash",
+                                "arguments": '{"cmd":"ls"}',
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": "a\nb\n",
+                },
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "description": "run shell",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"cmd": {"type": "string"}},
+                        },
+                    },
+                }
+            ],
+            "tool_choice": "auto",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["choices"][0]["message"]["content"] == "PONG"
+
+
 @pytest.fixture
 def authed_app():
     return create_app(runner=FakeRunner(), api_key="secret-key", max_concurrent=3)

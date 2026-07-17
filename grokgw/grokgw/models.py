@@ -1,14 +1,28 @@
 from __future__ import annotations
-from typing import Literal
-from pydantic import BaseModel, Field
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Message(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
+    """OpenAI-compatible chat message (proxy pass-through for tool fields)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    role: Literal["system", "user", "assistant", "tool", "function"]
+    content: Any = None  # str | list | null (tool/assistant tool_calls)
+    name: str | None = None
+    tool_calls: list[Any] | None = None
+    tool_call_id: str | None = None
+    function_call: Any | None = None  # legacy OpenAI
 
 
 class ChatCompletionRequest(BaseModel):
+    """OpenAI-compatible chat completions request."""
+
+    model_config = ConfigDict(extra="allow")
+
     model: str
     messages: list[Message]
     stream: bool = False
@@ -16,11 +30,25 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = None
     top_p: float | None = None
     reasoning_effort: Literal["low", "medium", "high"] | None = None
+    # native function calling (OpenAI-compatible)
+    tools: list[Any] | None = None
+    tool_choice: Any | None = None
+    parallel_tool_calls: bool | None = None
+    # legacy function calling
+    functions: list[Any] | None = None
+    function_call: Any | None = None
+    # common optional knobs forwarded by proxy
+    response_format: Any | None = None
+    stop: Any | None = None
+    user: str | None = None
+    n: int | None = None
 
 
 class ChoiceMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
-    content: str
+    content: str | None = None
+    tool_calls: list[Any] | None = None
+    function_call: Any | None = None
 
 
 class Choice(BaseModel):
@@ -48,6 +76,8 @@ class Delta(BaseModel):
     role: str | None = None
     content: str | None = None
     reasoning_content: str | None = None
+    tool_calls: list[Any] | None = None
+    function_call: Any | None = None
 
 
 class ChunkChoice(BaseModel):

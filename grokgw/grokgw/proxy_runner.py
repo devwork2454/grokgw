@@ -7,17 +7,66 @@ from collections.abc import AsyncIterator
 from grokgw.auth import AuthError, ensure_access_token
 from grokgw.config import Settings
 from grokgw.grok_runner import GrokRunError
-from grokgw.models import ChatCompletionRequest
+from grokgw.models import ChatCompletionRequest, Message
 
 _PROBE_TIMEOUT = 8
+
+# Request-level keys forwarded to upstream when set (OpenAI-compatible).
+_FORWARD_REQUEST_KEYS = (
+    "temperature",
+    "max_tokens",
+    "top_p",
+    "reasoning_effort",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "functions",
+    "function_call",
+    "response_format",
+    "stop",
+    "user",
+    "n",
+)
 
 
 class _NotSet:
     pass
 
 
+def message_to_upstream(m: Message) -> dict:
+    """Serialize a Message for upstream chat/completions (keep tool fields)."""
+    data = m.model_dump(exclude_none=True)
+    # tool/assistant tool_calls often use content=null; keep null only when tool-related
+    if m.content is None and (m.tool_calls or m.tool_call_id or m.function_call):
+        data["content"] = None
+    return data
+
+
+def build_upstream_payload(req: ChatCompletionRequest, *, stream: bool) -> dict:
+    """Pure request shaping for proxy upstream (unit-tested without network)."""
+    model = "grok-4.5" if req.model == "grok-latest" else req.model
+    payload: dict = {
+        "model": model,
+        "messages": [message_to_upstream(m) for m in req.messages],
+        "stream": stream,
+    }
+    for key in _FORWARD_REQUEST_KEYS:
+        val = getattr(req, key, None)
+        if val is not None:
+            payload[key] = val
+    # pass through any extra OpenAI fields the client sent
+    extra = getattr(req, "model_extra", None) or {}
+    for k, v in extra.items():
+        if k not in payload and v is not None:
+            payload[k] = v
+    return payload
+
+
 def _strip_reasoning_complete(data: dict) -> dict:
-    """Remove reasoning_content from non-stream OpenAI-style responses."""
+    """Remove reasoning_content from non-stream OpenAI-style responses.
+
+    Preserves tool_calls / function_call / finish_reason on the message.
+    """
     try:
         choices = data.get("choices")
         if not isinstance(choices, list):
@@ -45,6 +94,7 @@ def _strip_reasoning_sse_data(payload: str) -> str | None:
     """Filter reasoning-only stream chunks; strip reasoning fields from mixed chunks.
 
     Returns None if the entire chunk should be dropped (reasoning-only delta).
+    Always keeps tool_calls / function_call deltas and finish_reason=tool_calls.
     """
     try:
         obj = json.loads(payload)
@@ -149,12 +199,10 @@ class ProxyRunner:
         except AuthError as e:
             raise GrokRunError(str(e), 401, str(e)) from e
 
-        payload = json.dumps({
-            "model": "grok-4.5" if req.model == "grok-latest" else req.model,
-            "messages": [{"role": m.role, "content": m.content} for m in req.messages],
-            "stream": stream,
-            **({} if req.reasoning_effort is None else {"reasoning_effort": req.reasoning_effort}),
-        })
+        payload = json.dumps(
+            build_upstream_payload(req, stream=stream),
+            ensure_ascii=False,
+        )
 
         cmd = ["curl", "-sS", "--max-time", str(self._settings.timeout)]
         if proxy:

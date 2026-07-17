@@ -8,6 +8,7 @@ from grokgw.grok_runner import GrokRunError
 from grokgw.models import ChatCompletionRequest, Message
 from grokgw.proxy_runner import (
     ProxyRunner,
+    build_upstream_payload,
     _strip_reasoning_complete,
     _strip_reasoning_sse_data,
 )
@@ -221,3 +222,210 @@ async def test_complete_keeps_reasoning_when_enabled(monkeypatch, tmp_path):
     monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake)
     out = await ProxyRunner(s).complete(_req())
     assert out["choices"][0]["message"]["reasoning_content"] == "visible"
+
+
+def test_build_upstream_payload_plain_chat():
+    """Plain chat payload stays minimal (no tools keys)."""
+    payload = build_upstream_payload(_req(), stream=False)
+    assert payload["model"] == "grok-4.5"
+    assert payload["stream"] is False
+    assert payload["messages"] == [{"role": "user", "content": "Hi"}]
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+
+
+def test_build_upstream_payload_forwards_tools_and_tool_messages():
+    """Tools + multi-turn tool messages must appear on the upstream wire payload."""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+        }
+    ]
+    req = ChatCompletionRequest(
+        model="grok-latest",
+        messages=[
+            Message(role="user", content="read it"),
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path":"docs/STATUS.md"}',
+                        },
+                    }
+                ],
+            ),
+            Message(role="tool", content="ok", tool_call_id="call_1"),
+        ],
+        tools=tools,
+        tool_choice="auto",
+        temperature=0.2,
+        max_tokens=128,
+    )
+    payload = build_upstream_payload(req, stream=True)
+    assert payload["model"] == "grok-4.5"  # alias
+    assert payload["stream"] is True
+    assert payload["tools"] == tools
+    assert payload["tool_choice"] == "auto"
+    assert payload["temperature"] == 0.2
+    assert payload["max_tokens"] == 128
+    assert payload["messages"][1]["tool_calls"][0]["id"] == "call_1"
+    assert payload["messages"][1].get("content") is None
+    assert payload["messages"][2] == {
+        "role": "tool",
+        "content": "ok",
+        "tool_call_id": "call_1",
+    }
+
+
+async def test_complete_curl_includes_tools_json(monkeypatch, tmp_path):
+    """ProxyRunner.complete must put tools into the curl -d body (shipped path)."""
+    s = _settings(tmp_path, proxy_mode="never")
+    captured: list = []
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "bash",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    body = {
+        "id": "1",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {"name": "bash", "arguments": "{}"},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+
+    async def fake_create(*args, **kw):
+        captured.extend(args)
+        return MockProc(stdout_lines=[json.dumps(body).encode() + b"\n"], returncode=0)
+
+    monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake_create)
+    out = await ProxyRunner(s).complete(
+        _req(tools=tools, tool_choice="auto")
+    )
+    # find JSON -d argument
+    assert "-d" in captured
+    di = list(captured).index("-d")
+    wire = json.loads(captured[di + 1])
+    assert wire["tools"] == tools
+    assert wire["tool_choice"] == "auto"
+    assert wire["messages"][0]["content"] == "Hi"
+    # response tool_calls preserved (and reasoning strip does not drop them)
+    assert out["choices"][0]["message"]["tool_calls"][0]["id"] == "c1"
+    assert out["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_strip_reasoning_sse_keeps_tool_calls_delta():
+    """Reasoning filter must not drop pure tool_calls deltas."""
+    payload = json.dumps(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "bash", "arguments": ""},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    out = _strip_reasoning_sse_data(payload)
+    assert out is not None
+    parsed = json.loads(out)
+    assert parsed["choices"][0]["delta"]["tool_calls"][0]["id"] == "c1"
+
+
+def test_strip_reasoning_sse_keeps_tool_calls_finish():
+    payload = json.dumps(
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+    )
+    out = _strip_reasoning_sse_data(payload)
+    assert out is not None
+    assert json.loads(out)["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_strip_reasoning_complete_keeps_tool_calls_on_message():
+    data = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "plan",
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {"name": "bash", "arguments": "{}"},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+    out = _strip_reasoning_complete(data)
+    msg = out["choices"][0]["message"]
+    assert "reasoning_content" not in msg
+    assert msg["tool_calls"][0]["id"] == "c1"
+
+
+async def test_stream_forwards_tool_calls_and_single_done(monkeypatch, tmp_path):
+    s = _settings(tmp_path, proxy_mode="never", expose_reasoning=False)
+    lines = [
+        b'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n',
+        (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
+            b'"type":"function","function":{"name":"bash","arguments":"{}"}}]}}]}\n'
+        ),
+        b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n',
+        b"data: [DONE]\n",
+    ]
+    proc = MockProc(stdout_lines=lines, returncode=0)
+
+    async def fake(*a, **kw):
+        return proc
+
+    monkeypatch.setattr("grokgw.proxy_runner.asyncio.create_subprocess_exec", fake)
+    frames: list[str] = []
+    async for chunk in ProxyRunner(s).stream(_req(tools=[{"type": "function"}])):
+        frames.append(chunk)
+    joined = "".join(frames)
+    assert joined.count("[DONE]") == 1
+    assert "reasoning_content" not in joined
+    assert "tool_calls" in joined
+    assert "bash" in joined
+    assert "tool_calls" in joined  # finish reason also present

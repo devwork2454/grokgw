@@ -9,10 +9,18 @@ _MODEL_ALIASES = {"grok-latest": "grok-4.5"}
 _FINISH_MAP = {"endturn": "stop", "toolcalls": "tool_calls", "length": "length"}
 
 
+def _message_text(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False)
+
+
 def _build_prompt(req: ChatCompletionRequest) -> str:
     if len(req.messages) == 1 and req.messages[0].role == "user":
-        return req.messages[0].content
-    return "\n".join(f"{m.role}: {m.content}" for m in req.messages)
+        return _message_text(req.messages[0].content)
+    return "\n".join(f"{m.role}: {_message_text(m.content)}" for m in req.messages)
 
 
 def to_cli_args(
