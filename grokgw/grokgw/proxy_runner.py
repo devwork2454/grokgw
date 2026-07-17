@@ -16,6 +16,77 @@ class _NotSet:
     pass
 
 
+def _strip_reasoning_complete(data: dict) -> dict:
+    """Remove reasoning_content from non-stream OpenAI-style responses."""
+    try:
+        choices = data.get("choices")
+        if not isinstance(choices, list):
+            return data
+        new_choices = []
+        changed = False
+        for ch in choices:
+            if not isinstance(ch, dict):
+                new_choices.append(ch)
+                continue
+            msg = ch.get("message")
+            if isinstance(msg, dict) and "reasoning_content" in msg:
+                msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
+                ch = {**ch, "message": msg}
+                changed = True
+            new_choices.append(ch)
+        if changed:
+            return {**data, "choices": new_choices}
+    except Exception:
+        return data
+    return data
+
+
+def _strip_reasoning_sse_data(payload: str) -> str | None:
+    """Filter reasoning-only stream chunks; strip reasoning fields from mixed chunks.
+
+    Returns None if the entire chunk should be dropped (reasoning-only delta).
+    """
+    try:
+        obj = json.loads(payload)
+    except json.JSONDecodeError:
+        return payload
+    if not isinstance(obj, dict):
+        return payload
+    choices = obj.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return payload
+    new_choices = []
+    keep = False
+    for ch in choices:
+        if not isinstance(ch, dict):
+            new_choices.append(ch)
+            keep = True
+            continue
+        delta = ch.get("delta")
+        if isinstance(delta, dict):
+            # drop pure reasoning tokens that only carry reasoning_content
+            has_content = bool(delta.get("content"))
+            has_tools = bool(delta.get("tool_calls") or delta.get("function_call"))
+            has_role = bool(delta.get("role"))
+            has_finish = ch.get("finish_reason") is not None
+            cleaned = {k: v for k, v in delta.items() if k != "reasoning_content"}
+            if not has_content and not has_tools and not has_role and not has_finish:
+                # only reasoning (or empty) — skip
+                if set(delta.keys()) <= {"reasoning_content", "role"} and not has_role:
+                    continue
+                if list(delta.keys()) == ["reasoning_content"]:
+                    continue
+            ch = {**ch, "delta": cleaned}
+            if cleaned or has_finish:
+                keep = True
+        else:
+            keep = True
+        new_choices.append(ch)
+    if not keep or not new_choices:
+        return None
+    return json.dumps({**obj, "choices": new_choices}, ensure_ascii=False)
+
+
 class ProxyRunner:
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -123,6 +194,8 @@ class ProxyRunner:
             raise GrokRunError(f"upstream error: {msg}", status, msg)
         if "error" in data and isinstance(data["error"], str):
             raise GrokRunError(f"upstream error: {data['error']}", 502, data["error"])
+        if not self._settings.expose_reasoning:
+            data = _strip_reasoning_complete(data)
         return data
 
     async def stream(self, req: ChatCompletionRequest) -> AsyncIterator[str]:
@@ -131,15 +204,37 @@ class ProxyRunner:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
+        seen_done = False
         try:
             assert proc.stdout is not None
             async for line in proc.stdout:
                 decoded = line.decode(errors="replace").rstrip("\n")
+                if not decoded.strip():
+                    continue
+                # normalize to "data: ..." SSE frame body (without trailing blank line)
                 if decoded.startswith("data:"):
-                    yield decoded + "\n\n"
-                elif decoded.strip():
-                    yield f"data: {decoded}\n\n"
+                    payload = decoded[5:].lstrip()
+                    frame = decoded if decoded.endswith("\n") else decoded
+                else:
+                    payload = decoded
+                    frame = f"data: {decoded}"
+
+                # drop upstream [DONE]; we emit at most one at the end
+                if payload.strip() == "[DONE]":
+                    seen_done = True
+                    continue
+
+                if not self._settings.expose_reasoning and payload.strip() not in ("", "[DONE]"):
+                    filtered = _strip_reasoning_sse_data(payload)
+                    if filtered is None:
+                        continue  # reasoning-only chunk
+                    frame = f"data: {filtered}"
+
+                yield frame.rstrip("\n") + "\n\n"
+
+            # emit exactly one terminal DONE (upstream DONE was skipped above)
             yield "data: [DONE]\n\n"
+            _ = seen_done  # tracked for clarity / future metrics
         finally:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=self._settings.timeout + 5)
