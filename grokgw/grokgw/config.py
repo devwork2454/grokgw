@@ -45,6 +45,12 @@ class Settings:
     media_enabled: bool = True
     sessions_root: str = _DEFAULT_SESSIONS
     public_base: str = "http://127.0.0.1:8787"
+    # Request guards (OpenCode-sized histories)
+    max_messages: int = 200
+    max_message_chars: int = 500_000  # sum of message contents
+    max_body_bytes: int = 2_000_000
+    # Serialize grok CLI spawns (avoids concurrent -p pile-ups)
+    cli_serialize: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -77,10 +83,14 @@ class Settings:
         else:
             timeout = 120
 
+        # Default concurrency: lower for cli to reduce grok process storms
+        default_conc = "1" if backend == "cli" else "3"
+        max_concurrent = int(os.environ.get("GROKGW_MAX_CONCURRENT", default_conc))
+
         return cls(
             port=port,
             host=host,
-            max_concurrent=int(os.environ.get("GROKGW_MAX_CONCURRENT", "3")),
+            max_concurrent=max_concurrent,
             sandbox_root=os.environ.get("GROKGW_SANDBOX_ROOT", "/tmp"),
             api_key=os.environ.get("GROKGW_API_KEY"),
             grok_bin=os.environ.get("GROKGW_GROK_BIN", "grok"),
@@ -97,4 +107,8 @@ class Settings:
             media_enabled=media_enabled,
             sessions_root=sessions_root,
             public_base=public_base,
+            max_messages=int(os.environ.get("GROKGW_MAX_MESSAGES", "200")),
+            max_message_chars=int(os.environ.get("GROKGW_MAX_MESSAGE_CHARS", "500000")),
+            max_body_bytes=int(os.environ.get("GROKGW_MAX_BODY_BYTES", "2000000")),
+            cli_serialize=_get_bool("GROKGW_CLI_SERIALIZE", True),
         )

@@ -9,17 +9,114 @@ _MODEL_ALIASES = {"grok-latest": "grok-4.5"}
 _FINISH_MAP = {"endturn": "stop", "toolcalls": "tool_calls", "length": "length"}
 
 
+def _format_message_line(role: str, content: str, *, tool_call_id: str | None = None) -> str:
+    body = content if content else ""
+    if role in ("tool", "function") and tool_call_id:
+        return f"{role}[{tool_call_id}]: {body}".rstrip()
+    return f"{role}: {body}".rstrip()
+
+
 def _build_prompt(req: ChatCompletionRequest) -> str:
     if len(req.messages) == 1 and req.messages[0].role == "user":
         return req.messages[0].content
-    return "\n".join(f"{m.role}: {m.content}" for m in req.messages)
+    lines: list[str] = []
+    for m in req.messages:
+        # Skip empty assistant tool-call placeholders with no text.
+        if m.role == "assistant" and not m.content and m.tool_calls:
+            names = []
+            for tc in m.tool_calls:
+                if isinstance(tc, dict):
+                    fn = (tc.get("function") or {}).get("name")
+                    if fn:
+                        names.append(str(fn))
+            label = ", ".join(names) if names else "tool"
+            lines.append(f"assistant: [calling {label}]")
+            continue
+        if not m.content and m.role != "user":
+            continue
+        lines.append(
+            _format_message_line(m.role, m.content, tool_call_id=m.tool_call_id)
+        )
+    return "\n".join(lines) if lines else ""
+
+
+def to_upstream_messages(req: ChatCompletionRequest) -> list[dict[str, str]]:
+    """Normalize messages for OpenAI-compatible upstream (proxy backend).
+
+    Upstream xAI chat typically wants system/user/assistant with string content.
+    Tool / function rows are folded into user-visible text so OpenCode history
+    does not 422 at the gateway and still reaches the model as context.
+    """
+    out: list[dict[str, str]] = []
+    for m in req.messages:
+        if m.role in ("tool", "function"):
+            tid = f" ({m.tool_call_id})" if m.tool_call_id else ""
+            text = m.content or ""
+            out.append({"role": "user", "content": f"[tool result{tid}]: {text}".rstrip()})
+            continue
+        if m.role == "assistant" and not m.content and m.tool_calls:
+            names = []
+            for tc in m.tool_calls:
+                if isinstance(tc, dict):
+                    fn = (tc.get("function") or {}).get("name")
+                    if fn:
+                        names.append(str(fn))
+            label = ", ".join(names) if names else "tool"
+            out.append({"role": "assistant", "content": f"[calling {label}]"})
+            continue
+        if m.role in ("system", "user", "assistant"):
+            out.append({"role": m.role, "content": m.content or ""})
+    if not out:
+        out.append({"role": "user", "content": ""})
+    return out
+
+
+def resolve_model_id(model: str) -> str:
+    return _MODEL_ALIASES.get(model, model)
+
+
+def sampling_kwargs(req: ChatCompletionRequest) -> dict:
+    """Sampling fields supported by OpenAI-compatible upstream APIs."""
+    out: dict = {}
+    if req.temperature is not None:
+        out["temperature"] = req.temperature
+    if req.max_tokens is not None:
+        out["max_tokens"] = req.max_tokens
+    if req.top_p is not None:
+        out["top_p"] = req.top_p
+    if req.reasoning_effort is not None:
+        out["reasoning_effort"] = req.reasoning_effort
+    return out
+
+
+def unsupported_cli_sampling(req: ChatCompletionRequest) -> list[str]:
+    """Params accepted by the gateway but not applied on the CLI backend."""
+    ignored: list[str] = []
+    if req.temperature is not None:
+        ignored.append("temperature")
+    if req.max_tokens is not None:
+        ignored.append("max_tokens")
+    if req.top_p is not None:
+        ignored.append("top_p")
+    return ignored
+
+
+def to_upstream_chat_payload(req: ChatCompletionRequest, *, stream: bool) -> dict:
+    """Full chat.completions JSON body for the proxy backend."""
+    payload: dict = {
+        "model": resolve_model_id(req.model),
+        "messages": to_upstream_messages(req),
+        "stream": stream,
+    }
+    payload.update(sampling_kwargs(req))
+    return payload
 
 
 def to_cli_args(
     req: ChatCompletionRequest, *, sandbox_dir: str, settings: Settings, req_id: str
 ) -> list[str]:
     prompt = _build_prompt(req)
-    model = _MODEL_ALIASES.get(req.model, req.model)
+    model = resolve_model_id(req.model)
     args = [
         settings.grok_bin,
         "--no-auto-update",
@@ -36,6 +133,7 @@ def to_cli_args(
         args += ["--disallowed-tools", settings.grok_disallowed_tools]
     if req.reasoning_effort:
         args += ["--reasoning-effort", req.reasoning_effort]
+    # temperature / max_tokens / top_p: not supported by grok CLI flags
     return args
 
 

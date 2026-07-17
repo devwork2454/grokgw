@@ -15,6 +15,10 @@ def test_defaults():
     assert s.proxy_url == "socks5h://127.0.0.1:2080"
     assert s.proxy_mode == "auto"
     assert s.backend == "proxy"
+    assert s.max_messages == 200
+    assert s.max_message_chars == 500_000
+    assert s.max_body_bytes == 2_000_000
+    assert s.cli_serialize is True
 
 
 def test_env_override(monkeypatch):
@@ -26,6 +30,8 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("GROKGW_EXPOSE_REASONING", "true")
     monkeypatch.setenv("GROKGW_PROXY_URL", "socks5h://127.0.0.1:1080")
     monkeypatch.setenv("GROKGW_PROXY_MODE", "always")
+    monkeypatch.setenv("GROKGW_MAX_MESSAGES", "50")
+    monkeypatch.setenv("GROKGW_CLI_SERIALIZE", "0")
     s = Settings.from_env()
     assert s.port == 9999
     assert s.max_concurrent == 10
@@ -35,6 +41,16 @@ def test_env_override(monkeypatch):
     assert s.expose_reasoning is True
     assert s.proxy_url == "socks5h://127.0.0.1:1080"
     assert s.proxy_mode == "always"
+    assert s.max_messages == 50
+    assert s.cli_serialize is False
+
+
+def test_cli_backend_defaults_max_concurrent_one(monkeypatch):
+    monkeypatch.setenv("GROKGW_BACKEND", "cli")
+    monkeypatch.delenv("GROKGW_MAX_CONCURRENT", raising=False)
+    s = Settings.from_env()
+    assert s.backend == "cli"
+    assert s.max_concurrent == 1
 
 
 def test_proxy_url_empty_disables(monkeypatch):

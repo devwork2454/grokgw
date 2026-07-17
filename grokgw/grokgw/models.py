@@ -1,14 +1,68 @@
 from __future__ import annotations
-from typing import Literal
-from pydantic import BaseModel, Field
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+
+def coerce_message_content(value: Any) -> str:
+    """Normalize OpenAI/OpenCode content into a plain string.
+
+    Accepts str, None, or a list of content parts
+    (e.g. ``[{"type":"text","text":"..."}]``).
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                if item:
+                    parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            typ = item.get("type")
+            if typ == "text" or "text" in item:
+                text = item.get("text")
+                if text is not None and str(text):
+                    parts.append(str(text))
+            elif typ == "image_url":
+                parts.append("[image]")
+            elif typ == "input_image":
+                parts.append("[image]")
+            elif typ == "refusal":
+                refusal = item.get("refusal")
+                if refusal:
+                    parts.append(str(refusal))
+        return "\n".join(parts)
+    return str(value)
 
 
 class Message(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
+    """Chat message compatible with OpenAI agents / OpenCode payloads."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    role: Literal["system", "user", "assistant", "tool", "function"]
+    content: str = ""
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[Any] | None = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _coerce_content(cls, value: Any) -> str:
+        return coerce_message_content(value)
 
 
 class ChatCompletionRequest(BaseModel):
+    """OpenAI-compatible chat request; unknown fields (tools, etc.) are ignored."""
+
+    model_config = ConfigDict(extra="ignore")
+
     model: str
     messages: list[Message]
     stream: bool = False

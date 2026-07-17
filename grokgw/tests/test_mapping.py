@@ -1,7 +1,14 @@
 import json
 import pytest
 from grokgw.config import Settings
-from grokgw.mapping import to_cli_args, to_openai_response, to_sse_chunk
+from grokgw.mapping import (
+    sampling_kwargs,
+    to_cli_args,
+    to_openai_response,
+    to_sse_chunk,
+    to_upstream_chat_payload,
+    unsupported_cli_sampling,
+)
 from grokgw.models import ChatCompletionRequest, Message
 
 
@@ -53,6 +60,21 @@ def test_cli_args_multi_message_prompt():
     assert "user: Hello" in prompt
 
 
+def test_cli_args_includes_tool_messages():
+    req = make_req(
+        messages=[
+            Message(role="user", content="run it"),
+            Message(role="assistant", content="calling tool"),
+            Message(role="tool", content="ok", tool_call_id="c1"),
+            Message(role="user", content="continue"),
+        ]
+    )
+    args = to_cli_args(req, sandbox_dir="/tmp/sbx", settings=Settings(), req_id="r1")
+    prompt = args[args.index("-p") + 1]
+    assert "tool[c1]: ok" in prompt
+    assert "user: continue" in prompt
+
+
 def test_cli_args_model_alias_grok_latest():
     req = make_req(model="grok-latest")
     args = to_cli_args(req, sandbox_dir="/tmp/sbx", settings=Settings(), req_id="r1")
@@ -65,6 +87,22 @@ def test_cli_args_reasoning_effort():
     args = to_cli_args(req, sandbox_dir="/tmp/sbx", settings=Settings(), req_id="r1")
     re_idx = args.index("--reasoning-effort")
     assert args[re_idx + 1] == "high"
+
+
+def test_sampling_kwargs_and_upstream_payload():
+    req = make_req(temperature=0.2, max_tokens=64, top_p=0.9, reasoning_effort="low")
+    kw = sampling_kwargs(req)
+    assert kw == {
+        "temperature": 0.2,
+        "max_tokens": 64,
+        "top_p": 0.9,
+        "reasoning_effort": "low",
+    }
+    payload = to_upstream_chat_payload(req, stream=True)
+    assert payload["stream"] is True
+    assert payload["max_tokens"] == 64
+    assert payload["messages"][0]["content"] == "Hi"
+    assert unsupported_cli_sampling(req) == ["temperature", "max_tokens", "top_p"]
 
 
 def test_cli_args_grok_bin_from_settings():

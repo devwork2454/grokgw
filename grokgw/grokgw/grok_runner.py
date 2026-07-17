@@ -1,7 +1,11 @@
 from __future__ import annotations
+
 import asyncio
 import json
 import os
+import signal
+import time
+import uuid
 from collections.abc import AsyncIterator
 
 from grokgw.config import Settings
@@ -24,6 +28,8 @@ class GrokRunError(Exception):
 class GrokRunner:
     def __init__(self, settings: Settings):
         self._settings = settings
+        # Serialize grok -p processes: concurrent CLI sessions often hang/pile up.
+        self._spawn_lock = asyncio.Lock() if settings.cli_serialize else None
 
     async def complete(self, req: ChatCompletionRequest) -> dict:
         sandbox_dir = self._resolve_cwd()
@@ -34,7 +40,11 @@ class GrokRunner:
                 settings=self._settings,
                 req_id="cli",
             )
-            data = await self.run(args)
+            if self._spawn_lock is not None:
+                async with self._spawn_lock:
+                    data = await self.run(args)
+            else:
+                data = await self.run(args)
             if self._settings.media_enabled:
                 sid = data.get("sessionId") or ""
                 text = data.get("text") or ""
@@ -54,41 +64,52 @@ class GrokRunner:
 
     async def stream(self, req: ChatCompletionRequest) -> AsyncIterator[str]:
         sandbox_dir = self._resolve_cwd()
-        req_id = f"chatcmpl-cli"
+        req_id = f"chatcmpl-{uuid.uuid4().hex[:20]}"
+        lock = self._spawn_lock
         try:
-            args = to_cli_args(
-                req.model_copy(update={"stream": True}),
-                sandbox_dir=sandbox_dir,
-                settings=self._settings,
-                req_id=req_id,
-            )
-            async for event in self.run_stream(args):
-                chunk = to_sse_chunk(
-                    event, req_id=req_id, model=req.model, settings=self._settings
+            if lock is not None:
+                await lock.acquire()
+            try:
+                args = to_cli_args(
+                    req.model_copy(update={"stream": True}),
+                    sandbox_dir=sandbox_dir,
+                    settings=self._settings,
+                    req_id=req_id,
                 )
-                if chunk is not None:
-                    yield chunk
-            yield "data: [DONE]\n\n"
-        except GrokRunError as e:
-            err = to_sse_chunk(
-                {"type": "error", "message": str(e)},
-                req_id=req_id,
-                model=req.model,
-                settings=self._settings,
-            )
-            if err is not None:
-                yield err
-            yield "data: [DONE]\n\n"
-        except TimeoutError as e:
-            err = to_sse_chunk(
-                {"type": "error", "message": str(e)},
-                req_id=req_id,
-                model=req.model,
-                settings=self._settings,
-            )
-            if err is not None:
-                yield err
-            yield "data: [DONE]\n\n"
+                try:
+                    async for event in self.run_stream(args):
+                        chunk = to_sse_chunk(
+                            event,
+                            req_id=req_id,
+                            model=req.model,
+                            settings=self._settings,
+                        )
+                        if chunk is not None:
+                            yield chunk
+                    yield "data: [DONE]\n\n"
+                except GrokRunError as e:
+                    err = to_sse_chunk(
+                        {"type": "error", "message": str(e)},
+                        req_id=req_id,
+                        model=req.model,
+                        settings=self._settings,
+                    )
+                    if err is not None:
+                        yield err
+                    yield "data: [DONE]\n\n"
+                except TimeoutError as e:
+                    err = to_sse_chunk(
+                        {"type": "error", "message": str(e)},
+                        req_id=req_id,
+                        model=req.model,
+                        settings=self._settings,
+                    )
+                    if err is not None:
+                        yield err
+                    yield "data: [DONE]\n\n"
+            finally:
+                if lock is not None and lock.locked():
+                    lock.release()
         finally:
             if sandbox_dir != self._settings.grok_cwd:
                 cleanup_sandbox(sandbox_dir)
@@ -111,21 +132,24 @@ class GrokRunner:
         env["http_proxy"] = proxy
         return env
 
-    async def run(self, args: list[str]) -> dict:
-        proc = await asyncio.create_subprocess_exec(
+    async def _spawn(self, args: list[str]) -> asyncio.subprocess.Process:
+        return await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=self._subprocess_env(),
+            start_new_session=True,
         )
+
+    async def run(self, args: list[str]) -> dict:
+        proc = await self._spawn(args)
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
                 timeout=self._settings.timeout,
             )
         except asyncio.TimeoutError:
-            proc.kill()
-            await self._reap(proc)
+            await self._kill_tree(proc)
             raise TimeoutError(f"grok timed out after {self._settings.timeout}s") from None
 
         assert proc.returncode is not None
@@ -141,18 +165,35 @@ class GrokRunner:
         stdout_str = stdout.decode(errors="replace").strip()
         if not stdout_str:
             raise GrokRunError("grok produced no output", rc, "")
-        return json.loads(stdout_str)
+        try:
+            return json.loads(stdout_str)
+        except json.JSONDecodeError as e:
+            raise GrokRunError(
+                f"grok produced invalid JSON: {stdout_str[:300]}",
+                rc,
+                stdout_str,
+            ) from e
 
     async def run_stream(self, args: list[str]) -> AsyncIterator[dict]:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=self._subprocess_env(),
-        )
+        proc = await self._spawn(args)
+        deadline = time.monotonic() + self._settings.timeout
+        timed_out = False
         try:
             assert proc.stdout is not None
-            async for line in proc.stdout:
+            aiter = proc.stdout.__aiter__()
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    line = await asyncio.wait_for(aiter.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    timed_out = True
+                    break
+
                 line = line.strip()
                 if not line:
                     continue
@@ -161,23 +202,52 @@ class GrokRunner:
                 except json.JSONDecodeError:
                     continue
         finally:
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=self._settings.timeout)
-            except asyncio.TimeoutError:
-                proc.kill()
+            if timed_out or proc.returncode is None:
+                await self._kill_tree(proc)
+            else:
                 await self._reap(proc)
+
+            if timed_out:
                 raise TimeoutError(f"grok timed out after {self._settings.timeout}s") from None
 
             assert proc.returncode is not None
             rc = proc.returncode
             if rc != 0:
-                stderr_data = await proc.stderr.read() if proc.stderr else b""
-                stderr_str = stderr_data.decode(errors="replace")
+                stderr_data = b""
+                if proc.stderr is not None:
+                    try:
+                        stderr_data = await asyncio.wait_for(proc.stderr.read(), timeout=1)
+                    except (asyncio.TimeoutError, Exception):
+                        stderr_data = b""
+                # MockProc.stderr may be bytes already
+                if isinstance(proc.stderr, (bytes, bytearray)):
+                    stderr_data = bytes(proc.stderr)
+                stderr_str = stderr_data.decode(errors="replace") if isinstance(stderr_data, (bytes, bytearray)) else str(stderr_data)
                 raise GrokRunError(
                     f"grok exited with code {rc}: {stderr_str[-500:]}",
                     rc,
                     stderr_str,
                 )
+
+    async def _kill_tree(self, proc: asyncio.subprocess.Process) -> None:
+        """Kill the subprocess and its process group (grok children)."""
+        if proc.returncode is not None:
+            return
+        pid = getattr(proc, "pid", None)
+        if pid:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+        else:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        await self._reap(proc)
 
     @staticmethod
     async def _reap(proc: asyncio.subprocess.Process) -> None:

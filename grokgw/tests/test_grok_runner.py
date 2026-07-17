@@ -65,18 +65,103 @@ async def test_run_timeout_kills_process(monkeypatch, runner):
     class HangingProc(MockProc):
         async def communicate(self):
             await aio.sleep(100)  # never returns
+
         async def wait(self):
+            if self._killed:
+                self._returncode = -9
+                return self._returncode
             await aio.sleep(100)
+            return 0
 
     proc = HangingProc(stdout_lines=[], returncode=0)
 
     async def fake_create(*args, **kwargs):
+        assert kwargs.get("start_new_session") is True
         return proc
     monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
 
     with pytest.raises(TimeoutError):
         await r.run(["grok", "-p", "Hi"])
     assert proc._killed is True
+
+
+async def test_run_stream_timeout_kills_process(monkeypatch):
+    import asyncio as aio
+
+    r = GrokRunner(Settings(timeout=1))
+
+    class SlowProc(MockProc):
+        @property
+        def stdout(self):
+            proc = self
+
+            async def _aiter():
+                yield b'{"type":"text","data":"x"}\n'
+                await aio.sleep(100)
+                yield b'{"type":"end","stopReason":"EndTurn"}\n'
+                if proc._returncode is None and not proc._killed:
+                    proc._returncode = proc._final_returncode
+
+            return _aiter()
+
+        async def wait(self):
+            if self._killed:
+                self._returncode = -9
+                return self._returncode
+            await aio.sleep(100)
+            return 0
+
+    proc = SlowProc(stdout_lines=[], returncode=0)
+
+    async def fake_create(*args, **kwargs):
+        return proc
+
+    monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
+
+    with pytest.raises(TimeoutError):
+        async for _ in r.run_stream(["grok", "-p", "Hi"]):
+            pass
+    assert proc._killed is True
+
+
+async def test_run_invalid_json_raises(monkeypatch, runner):
+    proc = MockProc(stdout_lines=[b"not-json\n"], returncode=0)
+
+    async def fake_create(*args, **kwargs):
+        return proc
+
+    monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
+
+    with pytest.raises(GrokRunError, match="invalid JSON"):
+        await runner.run(["grok", "-p", "Hi"])
+
+
+async def test_cli_serialize_prevents_concurrent_spawns(monkeypatch):
+    import asyncio as aio
+
+    active = 0
+    max_active = 0
+
+    class SlowProc(MockProc):
+        async def communicate(self):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await aio.sleep(0.05)
+            active -= 1
+            self._returncode = 0
+            return b'{"text":"ok","stopReason":"EndTurn"}\n', b""
+
+    async def fake_create(*args, **kwargs):
+        return SlowProc(stdout_lines=[], returncode=0)
+
+    monkeypatch.setattr("grokgw.grok_runner.asyncio.create_subprocess_exec", fake_create)
+    r = GrokRunner(Settings(cli_serialize=True, media_enabled=False, timeout=5))
+    from grokgw.models import ChatCompletionRequest, Message
+
+    req = ChatCompletionRequest(model="grok-4.5", messages=[Message(role="user", content="hi")])
+    await aio.gather(r.complete(req), r.complete(req))
+    assert max_active == 1
 
 
 async def test_run_injects_proxy_env(monkeypatch):
