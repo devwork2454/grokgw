@@ -204,7 +204,6 @@ class ProxyRunner:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        seen_done = False
         try:
             assert proc.stdout is not None
             async for line in proc.stdout:
@@ -214,14 +213,13 @@ class ProxyRunner:
                 # normalize to "data: ..." SSE frame body (without trailing blank line)
                 if decoded.startswith("data:"):
                     payload = decoded[5:].lstrip()
-                    frame = decoded if decoded.endswith("\n") else decoded
+                    frame = decoded
                 else:
                     payload = decoded
                     frame = f"data: {decoded}"
 
-                # drop upstream [DONE]; we emit at most one at the end
+                # drop upstream [DONE]; we emit exactly one at the end
                 if payload.strip() == "[DONE]":
-                    seen_done = True
                     continue
 
                 if not self._settings.expose_reasoning and payload.strip() not in ("", "[DONE]"):
@@ -232,9 +230,8 @@ class ProxyRunner:
 
                 yield frame.rstrip("\n") + "\n\n"
 
-            # emit exactly one terminal DONE (upstream DONE was skipped above)
+            # single terminal DONE for OpenAI-compatible clients
             yield "data: [DONE]\n\n"
-            _ = seen_done  # tracked for clarity / future metrics
         finally:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=self._settings.timeout + 5)
