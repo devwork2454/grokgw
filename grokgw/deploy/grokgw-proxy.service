@@ -1,0 +1,16 @@
+[Unit]
+Description=grokgw OpenAI-compatible gateway (proxy backend, no SOCKS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/grokgw
+EnvironmentFile=/etc/grokgw/proxy.env
+ExecStart=/opt/grokgw/.venv/bin/python -m grokgw
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
