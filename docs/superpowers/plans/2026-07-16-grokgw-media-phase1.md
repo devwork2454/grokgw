@@ -2,6 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Progress snapshot (2026-07-17)
+
+| 项 | 状态 |
+|----|------|
+| 实现 + 单测 + README | **DONE**（已 merge main，media 相关 commits / PR #1） |
+| 远程 BLR 上 media 验收 | **OUT OF SCOPE**（本周期主线是 proxy 部署，非 CLI media） |
+
+下方 checkbox 可能仍为未勾选历史痕迹；**以本表与 `docs/STATUS.md` 为准**。
+
 **Goal:** 让 CLI 后端 chat 生成图片后，响应文本中的 `images/N.jpg` 被改写为可访问的 HTTP URL，客户端能 `GET` 拿到真实 JPEG（session harvest + static media serve）。
 
 **Architecture:** 不对抗 grok-build 生命周期。图片真实落盘在 `~/.grok/sessions/<urlencoded-cwd>/<sessionId>/images/N.jpg`（不是 sandbox cwd）。Phase 1 只做三件事：`(1)` 按 `sessionId` 安全定位 session 目录；`(2)` `GET /v1/media/sessions/{id}/images/{file}` 提供文件；`(3)` 非流式 `complete` 在拿到 grok JSON 后用 `sessionId` rewrite `text` 中的相对媒体路径。不写 stream rewrite（Phase 2）、不写 OpenAI Images 直连（Phase 3）、不写 video REST（Phase 4）。

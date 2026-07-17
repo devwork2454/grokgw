@@ -1,11 +1,41 @@
 # AGENTS.md — xpage research workspace
 
-This workspace is **research code, not a packaged application**. There is no build system, no linter, no formatter, no test runner, no CI. Two roots:
+This workspace is a **multi-product research monorepo** (not a single packaged app).
 
-- `DrissionPage/` — local clone of the upstream library at **5.0.0b0** (beta, **not on PyPI**). Installed editable.
-- `antibot/` — research scripts that use DrissionPage to probe bot-detection sites.
+| Doc | Role |
+|-----|------|
+| **`docs/STATUS.md`** | **What is true now** (maturity, tests, freezes) — read first for orientation |
+| **`docs/ROADMAP.md`** | **What we work on next** (single ACTIVE main line) |
+| **`docs/research/2026-07-17-xpage-structure-audit.md`** | Structure/planning audit |
 
-Do not add a build/lint/CI layer without an explicit request.
+**Current main line:** grokgw BLR Phase A deploy (proxy + SSH tunnel). Treat other product lines as PARKED/ROADMAPPED per ROADMAP — do not expand them unless the user reopens.
+
+## Workspace map
+
+| Path | Role | Notes |
+|------|------|--------|
+| `DrissionPage/` | Vendored upstream **5.0.0b0** (beta, **not on PyPI**); editable install | Dependency for browser work |
+| `antibot/` | Fingerprint / anti-bot **lab** scripts + reports | Research bed; not the ops product |
+| `runtime/` | Browser **ops** runtime (profiles, scheduler, risk, CLI) | Operational product; uses `data/` + `antibot/stealth_min.js` |
+| `grokgw/` | OpenAI-compatible **Grok API gateway** (own package/tests/deploy) | Logically independent product |
+| `data/` | Runtime data (sqlite, profiles, secrets, logs) | **gitignored**; never rmtree ops profiles casually |
+| `docs/superpowers/` | Design specs + implementation plans | Per-feature planning |
+| `docs/ROADMAP.md` | **Active main line + parked lines** | Update when priorities change |
+| `docs/research/` | Audits, handoffs, research notes | Not product code |
+| `studio/` | XYQ studio lite (designed, **not scaffolded yet**) | See ROADMAP — ROADMAPPED, not this week's main line |
+
+**Current main line (see ROADMAP):** grokgw deploy / stable API. Do not expand parked lines unless the user reopens them.
+
+There is no workspace-wide build/lint/CI requirement. Individual packages (e.g. `grokgw`, `runtime`) may have their own pytest; do not impose a monorepo CI layer without an explicit request.
+
+**Git remote note:** `origin` may still be named/pointed at the public **grokgw** repo while this tree also contains runtime/antibot/etc. Prefer ROADMAP + this map over remote name when judging scope.
+
+### Historical lab roots (still accurate for antibot work)
+
+Early focus was two roots — they remain the browser research spine:
+
+- `DrissionPage/` — local clone at **5.0.0b0**, editable install
+- `antibot/` — research scripts that probe bot-detection sites
 
 ## DrissionPage version trap
 

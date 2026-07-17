@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Progress snapshot (2026-07-17)
+
+| Task | 状态 | 说明 |
+|------|------|------|
+| Task 1 仓库 deploy 模板 | **DONE** | `grokgw/deploy/*` 已在 main（commit `4e83d53`）；下方 checkbox 可能仍为 `[ ]`，以本表为准 |
+| Task 2–7 实机部署与验收 | **TODO** | **当前 ACTIVE 主线**；见 `docs/ROADMAP.md` / `docs/STATUS.md` |
+
 **Goal:** 在 Vultr BLR（`139.84.151.149`）部署 grokgw **proxy 后端**，**不使用 SOCKS 代理**直连 `api.x.ai`，仅本机 **SSH 隧道**访问 `127.0.0.1:8787`，把 SuperGrok 订阅封装成 OpenAI 兼容 API。
 
 **Architecture:** BLR 上裸机 Python venv + systemd 跑 `python -m grokgw`（`GROKGW_BACKEND=proxy`、`GROKGW_PROXY_MODE=never`）。认证来自拷贝的 `~/.grok/auth.json`。对外不开放 8787；操作员本机 `ssh -L 8787:127.0.0.1:8787` 后调用。不安装 Grok Build CLI（阶段 B 另案）。不改动已有 hysteria2 / hy.achimigo.top。

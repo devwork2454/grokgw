@@ -1,7 +1,7 @@
 # Design: Grok API 网关（grokgw）
 
 - **Date:** 2026-07-15
-- **Status:** Draft for user review (brainstorming: 方案 A 已选, 设计第 1 节已口头确认)
+- **Status:** **Implemented (local)** — M0–media Phase1 代码与测试在仓；演进以 README + STATUS 为准。原 brainstorm 结论保留。远程 BLR Phase A 部署见 plan `2026-07-17-grokgw-blr-proxy-deploy.md`（ACTIVE）。
 - **Repo:** `xpage` 研究仓, 新建 `grokgw/` 子目录
 - **Phase covered:** M0-M2 (单机 headless 封装); M3+ 为演进预留
 

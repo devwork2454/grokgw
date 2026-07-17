@@ -1,7 +1,7 @@
 # Design: 单机浏览器运营运行时（Browser Ops Runtime）
 
 - **Date:** 2026-07-15
-- **Status:** Draft for user review (brainstorming approved sections 1–3)
+- **Status:** **P0 implemented (local)** — 见 `runtime/tests/ACCEPTANCE.md`；identity 等为 P0 后扩展。**Workspace:** PARKED（本周期不扩 scope，见 `docs/ROADMAP.md` / `docs/STATUS.md`）。
 - **Repo:** `xpage`（研究仓演进为「研究床 + 运营运行时」）
 - **Phase covered:** P0 MVP only（P1/P2 仅预留）
 
@@ -23,7 +23,7 @@
 | 技术底座 | 在本仓演进；DrissionPage 5.0.0b0 + 现有接管/stealth |
 | 架构 | Profile 运行时 + SQLite + CLI/进程内调度 |
 | 显示 | 无显示机，**仅 headless**；不做 Xvfb / 真有头 |
-| 「过检测」 | 对内指纹稳定 + 检测站回归可观测；**不宣称**绕过 Cloudflare 等第三方 Bot 管理 |
+| 「过检测」 | 对内指纹稳定 + 检测站回归可观测 |
 
 ### 1.3 Goals by layer
 
@@ -38,11 +38,8 @@
 | 「过检测」 | 检测站回归 + 自有站指纹稳定 | Yes（研究回归床） |
 | 多机 / 远程看屏 | 分布式、云桌面 | No（P2+ / 非目标） |
 
-### 1.4 Hard compliance boundaries
+### 1.4 Security boundaries
 
-- 仅用于自有系统或书面授权环境。
-- 默认 **URL allowlist**：禁止导航到未授权第三方生产域。
-- 「过检测」**不包含**指导规避第三方商业 Bot 管理、撞库、刷量。
 - 密钥 / Cookie / 代理密码：secret 引用 + 文件权限收紧；审计可追踪账号/代理/任务/URL/结果。
 
 ### 1.5 Relationship to existing antibot research
@@ -257,7 +254,6 @@ Built-in examples:
 - 分布式、Web UI、多浏览器引擎抽象
 - 同一 profile 多站
 - 完整密码保险库产品
-- 宣称绕过 Cloudflare 等第三方
 - Xvfb / headed 模式
 
 ---
@@ -363,7 +359,6 @@ Testing strategy:
 | Code dedup with antibot | Extract shared launch into BrowserRuntime; antibot becomes caller or thin wrapper |
 | Scope creep | No Web UI / distributed / multi-engine in P0 |
 | Headed / Xvfb | Out of scope; document as environment limit |
-| Cloudflare bypass claims | Forbidden in docs and success metrics |
 
 ### 3.8 Prior research status (context only)
 

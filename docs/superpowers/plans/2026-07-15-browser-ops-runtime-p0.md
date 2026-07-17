@@ -2,6 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Progress snapshot (2026-07-17)
+
+| 项 | 状态 |
+|----|------|
+| P0 核心实现 + 验收 | **DONE**（`runtime/tests/ACCEPTANCE.md`；pytest **103 passed** 含后续测试） |
+| identity 扩展（Apple 等） | **LOCAL / 部分未 git 跟踪** |
+| 本周期工作区策略 | **PARKED** — 不扩 scope（`docs/ROADMAP.md`） |
+
+下方 checkbox 为历史执行痕迹，可能全未勾；**以本表与 `docs/STATUS.md` 为准**。
+
 **Goal:** 在本仓落地单机 P0 浏览器运营运行时：SQLite 元数据 + 每账号独立 Chrome profile + 代理绑定 + 进程内 interval 调度 + 基础风控 + CLI，并保留 antibot 回归入口。
 
 **Architecture:** 进程内模块化单体。`Store` 管 SQLite；`Risk` 做并发/冷却/allowlist/代理熔断；`BrowserRuntime` 从 `antibot/run_takeover.py` 固化接管启动（强制 `ChromiumOptions.headless(True)`）；`SessionManager` 管 profile 锁与代理解析；`Scheduler` 调任务脚本；`CLI` 为唯一运营入口。运营 profile 永不删除；研究回归用临时目录。
@@ -15,7 +25,6 @@
 - 浏览器相关集成测试需要本机 Chrome + 代理监听；单元测试不启浏览器。
 - 激活 venv：`source antibot/.venv/bin/activate`；在仓库根执行 `python -m runtime ...`（需 `PYTHONPATH=.` 或从根安装 editable；计划采用 **仓库根为 cwd 且 `python -m runtime`**，`runtime` 包在根下）。
 - 不要引入 Web UI、分布式、Xvfb、多引擎。
-- 不要把「过 Cloudflare」写入成功标准。
 
 ---
 
